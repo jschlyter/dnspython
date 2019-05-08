@@ -673,5 +673,7 @@ def xfr(where, zone, rdtype=dns.rdatatype.AXFR, rdclass=dns.rdataclass.IN,
                 expecting_SOA = False
         if done and q.keyring and not r.had_tsig:
             raise dns.exception.FormError("missing TSIG")
+        if rdtype == dns.rdatatype.IXFR:
+            r.ixfr_delete = delete_mode
         yield r
     s.close()
