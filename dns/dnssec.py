@@ -26,6 +26,7 @@ import time
 import base64
 from datetime import datetime, timezone
 
+from dns.dnssecpolicy import AlgorithmPolicy, RFC_8624_POLICY, Requirement
 from dns.dnssectypes import Algorithm, DSDigest, NSEC3Hash
 
 import dns.exception
@@ -247,6 +248,18 @@ def _is_sha384(algorithm: int) -> bool:
 
 def _is_sha512(algorithm: int) -> bool:
     return algorithm == Algorithm.RSASHA512
+
+
+def _is_deprecated(
+    algorithm: int, signing: bool = False, policy: AlgorithmPolicy = RFC_8624_POLICY
+) -> bool:
+    requirement = policy.get(algorithm)
+    if requirement is None:
+        return False
+    if signing:
+        return requirement.signing == Requirement.MUST_NOT
+    else:
+        return requirement.validation == Requirement.MUST_NOT
 
 
 def _ensure_algorithm_key_combination(algorithm: int, key: PublicKey) -> None:

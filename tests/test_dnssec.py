@@ -1064,5 +1064,37 @@ class DNSSECSignatureTestCase(unittest.TestCase):
         dns.dnssec.validate(rrset=rrset, rrsigset=rrsigset, keys=keys)
 
 
+class DNSSECAlgorithmPolicyTestCase(unittest.TestCase):
+    def testAlgorithmPolicy(self):  # type: () -> None
+        self.assertTrue(
+            dns.dnssec._is_deprecated(
+                algorithm=dns.dnssec.Algorithm.DSANSEC3SHA1, signing=False
+            )
+        )
+        self.assertTrue(
+            dns.dnssec._is_deprecated(
+                algorithm=dns.dnssec.Algorithm.DSANSEC3SHA1, signing=True
+            )
+        )
+        self.assertFalse(
+            dns.dnssec._is_deprecated(
+                algorithm=dns.dnssec.Algorithm.RSASHA256, signing=True
+            )
+        )
+        self.assertFalse(
+            dns.dnssec._is_deprecated(
+                algorithm=dns.dnssec.Algorithm.ECDSAP256SHA256, signing=True
+            )
+        )
+        self.assertFalse(
+            dns.dnssec._is_deprecated(algorithm=dns.dnssec.Algorithm.ECCGOST)
+        )
+        self.assertTrue(
+            dns.dnssec._is_deprecated(
+                algorithm=dns.dnssec.Algorithm.ECCGOST, signing=True
+            )
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
