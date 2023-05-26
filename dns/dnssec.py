@@ -1275,6 +1275,7 @@ def default_rrset_signer(
     inception: Optional[Union[datetime, str, int, float]] = None,
     expiration: Optional[Union[datetime, str, int, float]] = None,
     lifetime: Optional[int] = None,
+    policy: Optional[Policy] = None,
 ) -> None:
     """Default RRset signer"""
 
@@ -1298,6 +1299,7 @@ def default_rrset_signer(
             expiration=expiration,
             lifetime=lifetime,
             signer=signer,
+            policy=policy,
         )
         txn.add(rrset.name, rrset.ttl, rrsig)
 
@@ -1313,6 +1315,7 @@ def sign_zone(
     lifetime: Optional[int] = None,
     nsec3: Optional[NSEC3PARAM] = None,
     rrset_signer: Optional[RRsetSigner] = None,
+    policy: Optional[Policy] = None,
 ) -> None:
     """Sign zone.
 
@@ -1401,6 +1404,7 @@ def sign_zone(
                 inception=inception,
                 expiration=expiration,
                 lifetime=lifetime,
+                policy=policy,
             )
             return _sign_zone_nsec(zone, _txn, _rrset_signer)
 
