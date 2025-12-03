@@ -45,6 +45,7 @@ from dns.rdtypes.ANY.CDNSKEY import CDNSKEY
 from dns.rdtypes.ANY.CDS import CDS
 from dns.rdtypes.ANY.DNSKEY import DNSKEY
 from dns.rdtypes.ANY.DS import DS
+from dns.rdtypes.ANY.KEY import KEY
 from dns.rdtypes.ANY.NSEC import NSEC, Bitmap
 from dns.rdtypes.ANY.NSEC3PARAM import NSEC3PARAM
 from dns.rdtypes.ANY.RRSIG import RRSIG, sigtime_to_posixtime
@@ -105,7 +106,7 @@ def to_timestamp(value: datetime | str | float | int) -> int:
         raise TypeError("Unsupported timestamp type")
 
 
-def key_id(key: DNSKEY | CDNSKEY) -> int:
+def key_id(key: DNSKEY | CDNSKEY | KEY) -> int:
     """Return the key id (a 16-bit number) for the specified key.
 
     *key*, a ``dns.rdtypes.ANY.DNSKEY.DNSKEY``
