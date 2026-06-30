@@ -3,6 +3,7 @@ import logging
 import ssl
 import struct
 import time
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -62,7 +63,7 @@ class DnsClientContext:
     remote_port: int
 
 
-class DnsServer:
+class DnsServer(ABC):
     def __init__(self, query_timeout: float = 10, response_timeout: float = 10) -> None:
         self.logger = logging.getLogger(__name__).getChild(self.__class__.__name__)
         self.query_timeout = query_timeout
@@ -148,7 +149,11 @@ class DnsServer:
         await listener.serve(self.handle_tcp_client)
 
     async def handle_udp_client(
-        self, udp: UDPSocket, packet: bytes, remote_address: str, remote_port: int
+        self,
+        udp: UDPSocket,
+        packet: bytes,
+        remote_address: str,
+        remote_port: int,
     ) -> None:
         """Process UDP queries and responses"""
 
@@ -175,7 +180,10 @@ class DnsServer:
                 raw_response = response.to_wire(multi=multi)
                 await udp.sendto(raw_response, remote_address, remote_port)
 
-    async def handle_tcp_client(self, client: SocketStream) -> None:
+    async def handle_tcp_client(
+        self,
+        client: SocketStream,
+    ) -> None:
         """Process TCP queries and responses"""
 
         remote_address, remote_port = client.extra(SocketAttribute.remote_address)  # type: ignore
@@ -241,11 +249,12 @@ class DnsServer:
 
         t1 = time.perf_counter()
 
+        if len(query.question) == 0:
+            raise ValueError("No question in query")
+        elif len(query.question) > 1:
+            raise ValueError("Multiple queries not supported")
+
         try:
-            if len(query.question) == 0:
-                raise ValueError("No question in query")
-            elif len(query.question) > 1:
-                raise ValueError("Multiple queries not yet supported")
             return await self.query(query, client_context)
 
         except QueryRefused as exc:
@@ -269,6 +278,18 @@ class DnsServer:
         finally:
             t2 = time.perf_counter()
             self.logger.debug("Created query response in %.3f seconds", t2 - t1)
+
+    @abstractmethod
+    async def query(
+        self,
+        query: dns.message.Message,
+        client_context: DnsClientContext,
+    ) -> list[dns.message.Message] | None:
+        """Process DNS query message and return response messages if applicable"""
+        pass
+
+
+class ExampleDnsServer(DnsServer):
 
     async def query(
         self,
@@ -320,7 +341,7 @@ def main() -> None:
     port = 5300
     tls_port = 8853
 
-    server = DnsServer()
+    server = ExampleDnsServer()
 
     asyncio.run(
         server.run(host=host, listen_tcp=port, listen_udp=port, listen_tls=tls_port)
