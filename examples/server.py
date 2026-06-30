@@ -61,6 +61,8 @@ class DnsClientContext:
     transport: DnsTransport
     remote_address: str
     remote_port: int
+    local_address: str | None = None
+    local_port: int | None = None
 
 
 class DnsServer(ABC):
@@ -103,24 +105,40 @@ class DnsServer(ABC):
                     )
                 )
 
-    async def udp_server(self, host: str, port: int) -> None:
-        """Start UDP server to listen for DNS message"""
+    async def udp_server(
+        self,
+        host: str,
+        port: int,
+    ) -> None:
+        """Start UDP server to listen for DNS messages"""
 
         self.logger.info("DNS UDP server listening to %s:%d", host, port)
 
         async with await anyio.create_udp_socket(
             local_host=host, local_port=port
-        ) as udp:
-            async for packet, (remote_address, remote_port) in udp:
-                await self.handle_udp_client(udp, packet, remote_address, remote_port)
+        ) as udp_socket:
+            async for packet, (remote_address, remote_port) in udp_socket:
+                client_context = DnsClientContext(
+                    transport=DnsTransport.UDP,
+                    remote_address=remote_address,
+                    remote_port=remote_port,
+                    local_address=host,
+                    local_port=port,
+                )
+                await self.handle_udp_client(udp_socket, packet, client_context)
 
-    async def tcp_server(self, host: str, port: int) -> None:
-        """Start TCP server to listen for DNS message"""
+    async def tcp_server(
+        self,
+        host: str,
+        port: int,
+    ) -> None:
+        """Start TCP server to listen for DNS messages"""
 
         self.logger.info("DNS TCP server listening to %s:%d", host, port)
 
-        listener = await anyio.create_tcp_listener(local_host=host, local_port=port)
-        await listener.serve(self.handle_tcp_client)
+        tcp_listener = await anyio.create_tcp_listener(local_host=host, local_port=port)
+
+        await tcp_listener.serve(self.handle_tcp_client)
 
     async def tls_server(
         self,
@@ -128,8 +146,9 @@ class DnsServer(ABC):
         port: int,
         certfile: str | None = None,
         keyfile: str | None = None,
+        hostname: str | None = None,
     ) -> None:
-        """Start TLS server to listen for DNS message"""
+        """Start TLS server to listen for DNS messages"""
 
         self.logger.info("DNS TLS server listening to %s:%d", host, port)
 
@@ -139,30 +158,27 @@ class DnsServer(ABC):
             context.load_cert_chain(certfile=certfile, keyfile=keyfile)
         else:
             # Create a self-signed certificate for localhost using trustme
-            trustme.CA().issue_cert("localhost").configure_cert(context)
+            trustme.CA().issue_cert(hostname or "localhost").configure_cert(context)
 
-        listener = TLSListener(
+        tls_listener = TLSListener(
             await anyio.create_tcp_listener(local_host=host, local_port=port),
             context,
         )
 
-        await listener.serve(self.handle_tcp_client)
+        await tls_listener.serve(self.handle_tcp_client)
 
     async def handle_udp_client(
         self,
-        udp: UDPSocket,
+        udp_socket: UDPSocket,
         packet: bytes,
-        remote_address: str,
-        remote_port: int,
+        client_context: DnsClientContext,
     ) -> None:
         """Process UDP queries and responses"""
 
-        self.logger.debug("UDP packet from %s:%d", remote_address, remote_port)
-
-        client_context = DnsClientContext(
-            transport=DnsTransport.UDP,
-            remote_address=remote_address,
-            remote_port=remote_port,
+        self.logger.debug(
+            "UDP packet from %s:%d",
+            client_context.remote_address,
+            client_context.remote_port,
         )
 
         try:
@@ -178,17 +194,22 @@ class DnsServer(ABC):
             self.logger.debug("Returning %d DNS messages", len(responses))  # type: ignore
             for response in responses:
                 raw_response = response.to_wire(multi=multi)
-                await udp.sendto(raw_response, remote_address, remote_port)
+                await udp_socket.sendto(
+                    raw_response,
+                    client_context.remote_address,
+                    client_context.remote_port,
+                )
 
     async def handle_tcp_client(
         self,
-        client: SocketStream,
+        socket_stream: SocketStream,
     ) -> None:
         """Process TCP queries and responses"""
 
-        remote_address, remote_port = client.extra(SocketAttribute.remote_address)  # type: ignore
+        remote_address, remote_port = socket_stream.extra(SocketAttribute.remote_address)  # type: ignore
+        local_address, local_port = socket_stream.extra(SocketAttribute.local_address)  # type: ignore
 
-        if isinstance(client, TLSStream):
+        if isinstance(socket_stream, TLSStream):
             self.logger.debug(
                 "TLS connection from %s:%d",
                 remote_address,
@@ -198,6 +219,8 @@ class DnsServer(ABC):
                 transport=DnsTransport.TLS,
                 remote_address=remote_address,
                 remote_port=remote_port,
+                local_address=local_address,
+                local_port=local_port,
             )
         else:
             self.logger.debug("TCP connection from %s:%d", remote_address, remote_port)
@@ -205,16 +228,18 @@ class DnsServer(ABC):
                 transport=DnsTransport.TCP,
                 remote_address=remote_address,
                 remote_port=remote_port,
+                local_address=local_address,
+                local_port=local_port,
             )
         try:
             while True:
                 raw_data: bytes = b""
                 async with asyncio.timeout(self.query_timeout):
-                    if query_length_bytes := await client.receive(2):
+                    if query_length_bytes := await socket_stream.receive(2):
                         if len(query_length_bytes) < 2:
                             raise ValueError("Received incomplete query length")
                         query_length = struct.unpack("!H", query_length_bytes)
-                        raw_data = await client.receive(query_length[0])
+                        raw_data = await socket_stream.receive(query_length[0])
                         if len(raw_data) < query_length[0]:
                             raise ValueError("Received incomplete query data")
 
@@ -231,7 +256,7 @@ class DnsServer(ABC):
                     ):
                         for response in responses:
                             raw_response = response.to_wire(prepend_length=True)
-                            await client.send(raw_response)
+                            await socket_stream.send(raw_response)
                         self.logger.debug("Returned %d DNS messages", len(responses))
         except anyio.EndOfStream:
             self.logger.debug("TCP connection closed by client")
@@ -290,6 +315,7 @@ class DnsServer(ABC):
 
 
 class ExampleDnsServer(DnsServer):
+    """Example implementation of a DNS server that handles specific queries"""
 
     async def query(
         self,
@@ -303,6 +329,7 @@ class ExampleDnsServer(DnsServer):
         rdtype = query.question[0].rdtype
         rdclass = query.question[0].rdclass
 
+        # Match the query against specific criteria and handle accordingly
         match (opcode, str(qname), rdtype, rdclass):
             case (
                 dns.opcode.QUERY,
@@ -311,9 +338,10 @@ class ExampleDnsServer(DnsServer):
                 dns.rdataclass.IN,
             ):
                 self.logger.info(
-                    f"Handling {dns.rdatatype.to_text(rdtype)}/{dns.rdataclass.to_text(rdclass)} query for {qname} "
-                    + f"from {client_context.transport} client "
-                    + f"at {client_context.remote_address}:{client_context.remote_port}"
+                    f"Handling {dns.rdatatype.to_text(rdtype)}/{dns.rdataclass.to_text(rdclass)} query for {qname}"
+                    + f" from {client_context.transport} client"
+                    + f" at {client_context.remote_address}:{client_context.remote_port}"
+                    + f" on {client_context.local_address}:{client_context.local_port}"
                 )
                 # Here you would implement the logic to handle the A record query for localhost.example.com
                 # For demonstration purposes, let's create a simple response
