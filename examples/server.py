@@ -23,6 +23,21 @@ import dns.rdatatype
 import dns.rrset
 
 
+class DnsTransport(StrEnum):
+    UDP = "udp"
+    TCP = "tcp"
+    TLS = "tls"
+
+
+@dataclass(frozen=True)
+class DnsClientContext:
+    transport: DnsTransport
+    remote_address: str
+    remote_port: int
+    local_address: str | None = None
+    local_port: int | None = None
+
+
 class QueryRefused(Exception):
 
     def __init__(self, query: dns.message.Message) -> None:
@@ -48,21 +63,6 @@ class QueryRefused(Exception):
             "Query refused: "
             + ", ".join(f"{key}={value}" for key, value in parameters.items())
         )
-
-
-class DnsTransport(StrEnum):
-    UDP = "udp"
-    TCP = "tcp"
-    TLS = "tls"
-
-
-@dataclass(frozen=True)
-class DnsClientContext:
-    transport: DnsTransport
-    remote_address: str
-    remote_port: int
-    local_address: str | None = None
-    local_port: int | None = None
 
 
 class DnsServer(ABC):
