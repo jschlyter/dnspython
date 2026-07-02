@@ -292,10 +292,16 @@ class DnsServer(ABC):
 
         t1 = time.perf_counter()
 
-        if len(query.question) == 0:
-            raise ValueError("No question in query")
-        elif len(query.question) > 1:
-            raise ValueError("Multiple queries not supported")
+        if len(query.question) != 1:
+            self.logger.warning(
+                "Refusing query with %d questions", len(query.question)
+            )
+            response = dns.message.Message(query.id)
+            response.set_opcode(query.opcode())
+            response.flags = dns.flags.QR
+            response.question = list(query.question)
+            response.set_rcode(dns.rcode.FORMERR)
+            return [response]
 
         try:
             return await self.query(query, client_context)
