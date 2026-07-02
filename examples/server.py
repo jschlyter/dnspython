@@ -232,8 +232,13 @@ class DnsServer(ABC):
         ):
             multi = len(responses) > 1
             self.logger.debug("Returning %d DNS messages", len(responses))  # type: ignore
+            # Truncate responses that exceed the client's advertised EDNS
+            # payload size (or the 512 byte default), setting the TC flag
+            max_size = query.payload if query.edns >= 0 else 512
             for response in responses:
-                raw_response = response.to_wire(multi=multi)
+                raw_response = response.to_wire(
+                    multi=multi, max_size=max_size, prefer_truncation=True
+                )
                 await udp_socket.sendto(
                     raw_response,
                     client_context.remote_address,
