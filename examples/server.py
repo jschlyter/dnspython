@@ -1,4 +1,4 @@
-import asyncio
+import functools
 import logging
 import ssl
 import struct
@@ -122,39 +122,45 @@ class DnsServer(ABC):
     ) -> None:
         """Start the DNS server"""
 
-        async with asyncio.TaskGroup() as tg:
+        async with anyio.create_task_group() as tg:
             if listen_udp:
+                udp_port = 53 if listen_udp is True else listen_udp
                 if host:
-                    tg.create_task(
-                        self.udp_server(
+                    tg.start_soon(
+                        functools.partial(
+                            self.udp_server,
                             host=host,
-                            port=53 if listen_udp is True else listen_udp,
+                            port=udp_port,
                         )
                     )
                 else:
                     # Listen to both all IPv4 and IPv6 addresses if no specific host is provided
-                    tg.create_task(
-                        self.udp_server(
+                    tg.start_soon(
+                        functools.partial(
+                            self.udp_server,
                             host="0.0.0.0",
-                            port=53 if listen_udp is True else listen_udp,
+                            port=udp_port,
                         )
                     )
-                    tg.create_task(
-                        self.udp_server(
+                    tg.start_soon(
+                        functools.partial(
+                            self.udp_server,
                             host="::",
-                            port=53 if listen_udp is True else listen_udp,
+                            port=udp_port,
                         )
                     )
             if listen_tcp:
-                tg.create_task(
-                    self.tcp_server(
+                tg.start_soon(
+                    functools.partial(
+                        self.tcp_server,
                         host=host,
                         port=53 if listen_tcp is True else listen_tcp,
                     )
                 )
             if listen_tls:
-                tg.create_task(
-                    self.tls_server(
+                tg.start_soon(
+                    functools.partial(
+                        self.tls_server,
                         host=host,
                         port=853 if listen_tls is True else listen_tls,
                         certfile=certfile,
@@ -183,24 +189,8 @@ class DnsServer(ABC):
                     udp_socket, remote_address, remote_port
                 )
                 tg.start_soon(
-                    self._handle_udp_client_safe, udp_socket, packet, client_context
+                    self.handle_udp_client, udp_socket, packet, client_context
                 )
-
-    async def _handle_udp_client_safe(
-        self,
-        udp_socket: UDPSocket,
-        packet: bytes,
-        client_context: DnsClientContext,
-    ) -> None:
-        """Handle a UDP client without letting errors escape to the server loop"""
-
-        try:
-            async with asyncio.timeout(self.response_timeout):
-                await self.handle_udp_client(udp_socket, packet, client_context)
-        except TimeoutError:
-            self.logger.warning("Timeout handling message")
-        except Exception as exc:
-            self.logger.error(f"Error responding to DNS query: {exc}", exc_info=exc)
 
     async def tcp_server(
         self,
@@ -257,28 +247,34 @@ class DnsServer(ABC):
         )
 
         try:
-            query = dns.message.from_wire(packet)
-        except dns.exception.DNSException:
-            return
+            with anyio.fail_after(self.response_timeout):
+                try:
+                    query = dns.message.from_wire(packet)
+                except dns.exception.DNSException:
+                    return
 
-        if responses := await self.handle_query(
-            query=query,
-            client_context=client_context,
-        ):
-            multi = len(responses) > 1
-            self.logger.debug("Returning %d DNS messages", len(responses))  # type: ignore
-            # Truncate responses that exceed the client's advertised EDNS
-            # payload size (or the 512 byte default), setting the TC flag
-            max_size = query.payload if query.edns >= 0 else 512
-            for response in responses:
-                raw_response = response.to_wire(
-                    multi=multi, max_size=max_size, prefer_truncation=True
-                )
-                await udp_socket.sendto(
-                    raw_response,
-                    client_context.remote_address,
-                    client_context.remote_port,
-                )
+                if responses := await self.handle_query(
+                    query=query,
+                    client_context=client_context,
+                ):
+                    multi = len(responses) > 1
+                    self.logger.debug("Returning %d DNS messages", len(responses))  # type: ignore
+                    # Truncate responses that exceed the client's advertised EDNS
+                    # payload size (or the 512 byte default), setting the TC flag
+                    max_size = query.payload if query.edns >= 0 else 512
+                    for response in responses:
+                        raw_response = response.to_wire(
+                            multi=multi, max_size=max_size, prefer_truncation=True
+                        )
+                        await udp_socket.sendto(
+                            raw_response,
+                            client_context.remote_address,
+                            client_context.remote_port,
+                        )
+        except TimeoutError:
+            self.logger.warning("Timeout handling message")
+        except Exception as exc:
+            self.logger.error(f"Error responding to DNS query: {exc}", exc_info=exc)
 
     async def handle_tcp_client(
         self,
@@ -299,7 +295,7 @@ class DnsServer(ABC):
 
         try:
             while True:
-                async with asyncio.timeout(self.query_timeout):
+                with anyio.fail_after(self.query_timeout):
                     query_length_bytes = await buffered_stream.receive_exactly(2)
                     (query_length,) = struct.unpack("!H", query_length_bytes)
                     raw_data = await buffered_stream.receive_exactly(query_length)
@@ -310,7 +306,7 @@ class DnsServer(ABC):
                     self.logger.warning(f"Invalid query: {exc}", exc_info=exc)
                     return
 
-                async with asyncio.timeout(self.response_timeout):
+                with anyio.fail_after(self.response_timeout):
                     if responses := await self.handle_query(
                         query=query,
                         client_context=client_context,
@@ -437,13 +433,20 @@ def main() -> None:
     logging.basicConfig(level=logging.DEBUG)
 
     host = "127.0.0.1"
-    port = 5300
+    udp_port = 5300
+    tcp_port = 5300
     tls_port = 8853
 
     server = ExampleDnsServer()
 
-    asyncio.run(
-        server.run(host=host, listen_tcp=port, listen_udp=port, listen_tls=tls_port)
+    anyio.run(
+        functools.partial(
+            server.run,
+            host=host,
+            listen_udp=udp_port,
+            listen_tcp=tcp_port,
+            listen_tls=tls_port,
+        )
     )
 
 
