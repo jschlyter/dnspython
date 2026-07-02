@@ -316,6 +316,12 @@ class DnsServer(ABC):
 
         t1 = time.perf_counter()
 
+        # Silently ignore messages that are themselves responses (QR flag
+        # set); answering them could create a reflection loop between servers
+        if query.flags & dns.flags.QR:
+            self.logger.warning("Ignoring message with QR flag set")
+            return None
+
         if len(query.question) != 1:
             self.logger.warning(
                 "Refusing query with %d questions", len(query.question)
