@@ -54,8 +54,8 @@ class DnsClientContext:
             transport=DnsTransport.UDP,
             remote_address=remote_address,
             remote_port=remote_port,
-            local_address=local_address,
-            local_port=local_port,
+            local_address=str(local_address),
+            local_port=int(local_port),
         )
 
     @classmethod
@@ -71,10 +71,10 @@ class DnsClientContext:
                 if isinstance(socket_stream, TLSStream)
                 else DnsTransport.TCP
             ),
-            remote_address=remote_address,
-            remote_port=remote_port,
-            local_address=local_address,
-            local_port=local_port,
+            remote_address=str(remote_address),
+            remote_port=int(remote_port),
+            local_address=str(local_address),
+            local_port=int(local_port),
         )
 
 
