@@ -10,6 +10,7 @@ from enum import StrEnum
 import anyio
 import trustme
 from anyio.abc import SocketAttribute, SocketStream, UDPSocket
+from anyio.streams.buffered import BufferedByteReceiveStream
 from anyio.streams.tls import TLSListener, TLSStream
 
 import dns.exception
@@ -254,17 +255,14 @@ class DnsServer(ABC):
                 local_address=local_address,
                 local_port=local_port,
             )
+        buffered_stream = BufferedByteReceiveStream(socket_stream)
+
         try:
             while True:
-                raw_data: bytes = b""
                 async with asyncio.timeout(self.query_timeout):
-                    if query_length_bytes := await socket_stream.receive(2):
-                        if len(query_length_bytes) < 2:
-                            raise ValueError("Received incomplete query length")
-                        query_length = struct.unpack("!H", query_length_bytes)
-                        raw_data = await socket_stream.receive(query_length[0])
-                        if len(raw_data) < query_length[0]:
-                            raise ValueError("Received incomplete query data")
+                    query_length_bytes = await buffered_stream.receive_exactly(2)
+                    (query_length,) = struct.unpack("!H", query_length_bytes)
+                    raw_data = await buffered_stream.receive_exactly(query_length)
 
                 try:
                     query = dns.message.from_wire(raw_data)
@@ -281,7 +279,7 @@ class DnsServer(ABC):
                             raw_response = response.to_wire(prepend_length=True)
                             await socket_stream.send(raw_response)
                         self.logger.debug("Returned %d DNS messages", len(responses))
-        except anyio.EndOfStream:
+        except (anyio.EndOfStream, anyio.IncompleteRead):
             self.logger.debug("TCP connection closed by client")
         except TimeoutError:
             self.logger.warning("Timeout handling message")
