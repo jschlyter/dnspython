@@ -132,10 +132,13 @@ class DnsServer(ABC):
 
         self.logger.info("DNS UDP server listening to %s:%d", host or "*", port)
 
-        async with await anyio.create_udp_socket(
-            local_host=host,
-            local_port=port,
-        ) as udp_socket:
+        async with (
+            await anyio.create_udp_socket(
+                local_host=host,
+                local_port=port,
+            ) as udp_socket,
+            anyio.create_task_group() as tg,
+        ):
             async for packet, (remote_address, remote_port) in udp_socket:
                 client_context = DnsClientContext(
                     transport=DnsTransport.UDP,
@@ -144,12 +147,25 @@ class DnsServer(ABC):
                     local_address=host,
                     local_port=port,
                 )
-                try:
-                    await self.handle_udp_client(udp_socket, packet, client_context)
-                except Exception as exc:
-                    self.logger.error(
-                        f"Error responding to DNS query: {exc}", exc_info=exc
-                    )
+                tg.start_soon(
+                    self._handle_udp_client_safe, udp_socket, packet, client_context
+                )
+
+    async def _handle_udp_client_safe(
+        self,
+        udp_socket: UDPSocket,
+        packet: bytes,
+        client_context: DnsClientContext,
+    ) -> None:
+        """Handle a UDP client without letting errors escape to the server loop"""
+
+        try:
+            async with asyncio.timeout(self.response_timeout):
+                await self.handle_udp_client(udp_socket, packet, client_context)
+        except TimeoutError:
+            self.logger.warning("Timeout handling message")
+        except Exception as exc:
+            self.logger.error(f"Error responding to DNS query: {exc}", exc_info=exc)
 
     async def tcp_server(
         self,
