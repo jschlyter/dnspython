@@ -6,6 +6,7 @@ import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Self
 
 import anyio
 import trustme
@@ -37,6 +38,44 @@ class DnsClientContext:
     remote_port: int
     local_address: str | None = None
     local_port: int | None = None
+
+    @classmethod
+    def from_udp_socket(
+        cls,
+        udp_socket: UDPSocket,
+        remote_address: str,
+        remote_port: int,
+    ) -> Self:
+        """Create a DnsClientContext from a UDP socket and remote address/port"""
+
+        local_address, local_port = udp_socket.extra(SocketAttribute.local_address)  # type: ignore
+
+        return cls(
+            transport=DnsTransport.UDP,
+            remote_address=remote_address,
+            remote_port=remote_port,
+            local_address=local_address,
+            local_port=local_port,
+        )
+
+    @classmethod
+    def from_socket_stream(cls, socket_stream: SocketStream) -> Self:
+        """Create a DnsClientContext from a socket stream"""
+
+        remote_address, remote_port = socket_stream.extra(SocketAttribute.remote_address)  # type: ignore
+        local_address, local_port = socket_stream.extra(SocketAttribute.local_address)  # type: ignore
+
+        return cls(
+            transport=(
+                DnsTransport.TLS
+                if isinstance(socket_stream, TLSStream)
+                else DnsTransport.TCP
+            ),
+            remote_address=remote_address,
+            remote_port=remote_port,
+            local_address=local_address,
+            local_port=local_port,
+        )
 
 
 class QueryRefused(Exception):
@@ -140,12 +179,8 @@ class DnsServer(ABC):
             anyio.create_task_group() as tg,
         ):
             async for packet, (remote_address, remote_port) in udp_socket:
-                client_context = DnsClientContext(
-                    transport=DnsTransport.UDP,
-                    remote_address=remote_address,
-                    remote_port=remote_port,
-                    local_address=host,
-                    local_port=port,
+                client_context = DnsClientContext.from_udp_socket(
+                    udp_socket, remote_address, remote_port
                 )
                 tg.start_soon(
                     self._handle_udp_client_safe, udp_socket, packet, client_context
@@ -251,31 +286,15 @@ class DnsServer(ABC):
     ) -> None:
         """Process TCP queries and responses"""
 
-        remote_address, remote_port = socket_stream.extra(SocketAttribute.remote_address)  # type: ignore
-        local_address, local_port = socket_stream.extra(SocketAttribute.local_address)  # type: ignore
+        client_context = DnsClientContext.from_socket_stream(socket_stream)
 
-        if isinstance(socket_stream, TLSStream):
-            self.logger.debug(
-                "TLS connection from %s:%d",
-                remote_address,
-                remote_port,
-            )
-            client_context = DnsClientContext(
-                transport=DnsTransport.TLS,
-                remote_address=remote_address,
-                remote_port=remote_port,
-                local_address=local_address,
-                local_port=local_port,
-            )
-        else:
-            self.logger.debug("TCP connection from %s:%d", remote_address, remote_port)
-            client_context = DnsClientContext(
-                transport=DnsTransport.TCP,
-                remote_address=remote_address,
-                remote_port=remote_port,
-                local_address=local_address,
-                local_port=local_port,
-            )
+        self.logger.debug(
+            "%s connection from %s:%d",
+            client_context.transport.name.upper(),
+            client_context.remote_address,
+            client_context.remote_port,
+        )
+
         buffered_stream = BufferedByteReceiveStream(socket_stream)
 
         try:
@@ -323,9 +342,7 @@ class DnsServer(ABC):
             return None
 
         if len(query.question) != 1:
-            self.logger.warning(
-                "Refusing query with %d questions", len(query.question)
-            )
+            self.logger.warning("Refusing query with %d questions", len(query.question))
             response = dns.message.Message(query.id)
             response.set_opcode(query.opcode())
             response.flags = dns.flags.QR
