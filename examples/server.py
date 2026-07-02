@@ -143,7 +143,12 @@ class DnsServer(ABC):
                     local_address=host,
                     local_port=port,
                 )
-                await self.handle_udp_client(udp_socket, packet, client_context)
+                try:
+                    await self.handle_udp_client(udp_socket, packet, client_context)
+                except Exception as exc:
+                    self.logger.error(
+                        f"Error responding to DNS query: {exc}", exc_info=exc
+                    )
 
     async def tcp_server(
         self,
