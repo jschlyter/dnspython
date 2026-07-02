@@ -73,7 +73,7 @@ class DnsServer(ABC):
 
     async def run(
         self,
-        host: str,
+        host: str | None = None,
         listen_udp: bool | int = True,
         listen_tcp: bool | int = True,
         listen_tls: bool | int = False,
@@ -84,15 +84,32 @@ class DnsServer(ABC):
 
         async with asyncio.TaskGroup() as tg:
             if listen_udp:
-                tg.create_task(
-                    self.udp_server(
-                        host=host, port=53 if listen_udp is True else listen_udp
+                if host:
+                    tg.create_task(
+                        self.udp_server(
+                            host=host,
+                            port=53 if listen_udp is True else listen_udp,
+                        )
                     )
-                )
+                else:
+                    # Listen to both all IPv4 and IPv6 addresses if no specific host is provided
+                    tg.create_task(
+                        self.udp_server(
+                            host="0.0.0.0",
+                            port=53 if listen_udp is True else listen_udp,
+                        )
+                    )
+                    tg.create_task(
+                        self.udp_server(
+                            host="::",
+                            port=53 if listen_udp is True else listen_udp,
+                        )
+                    )
             if listen_tcp:
                 tg.create_task(
                     self.tcp_server(
-                        host=host, port=53 if listen_tcp is True else listen_tcp
+                        host=host,
+                        port=53 if listen_tcp is True else listen_tcp,
                     )
                 )
             if listen_tls:
@@ -108,14 +125,15 @@ class DnsServer(ABC):
     async def udp_server(
         self,
         host: str,
-        port: int,
+        port: int = 53,
     ) -> None:
         """Start UDP server to listen for DNS messages"""
 
-        self.logger.info("DNS UDP server listening to %s:%d", host, port)
+        self.logger.info("DNS UDP server listening to %s:%d", host or "*", port)
 
         async with await anyio.create_udp_socket(
-            local_host=host, local_port=port
+            local_host=host,
+            local_port=port,
         ) as udp_socket:
             async for packet, (remote_address, remote_port) in udp_socket:
                 client_context = DnsClientContext(
@@ -129,12 +147,12 @@ class DnsServer(ABC):
 
     async def tcp_server(
         self,
-        host: str,
-        port: int,
+        host: str | None = None,
+        port: int = 53,
     ) -> None:
         """Start TCP server to listen for DNS messages"""
 
-        self.logger.info("DNS TCP server listening to %s:%d", host, port)
+        self.logger.info("DNS TCP server listening to %s:%d", host or "*", port)
 
         tcp_listener = await anyio.create_tcp_listener(local_host=host, local_port=port)
 
@@ -142,15 +160,15 @@ class DnsServer(ABC):
 
     async def tls_server(
         self,
-        host: str,
-        port: int,
+        host: str | None = None,
+        port: int = 853,
         certfile: str | None = None,
         keyfile: str | None = None,
         hostname: str | None = None,
     ) -> None:
         """Start TLS server to listen for DNS messages"""
 
-        self.logger.info("DNS TLS server listening to %s:%d", host, port)
+        self.logger.info("DNS TLS server listening to %s:%d", host or "*", port)
 
         context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
 
