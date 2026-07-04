@@ -1,9 +1,9 @@
 """An example asynchronous DNS server framework.
 
 This module implements a small DNS server framework on top of anyio,
-supporting UDP, TCP, and TLS transports.  Subclass :py:class:`DnsServer`
-and implement its :py:meth:`DnsServer.query` method to build a server;
-see :py:class:`ExampleDnsServer` for a minimal implementation.
+supporting UDP, TCP, and TLS transports.  Subclass :py:class:`DNSServer`
+and implement its :py:meth:`DNSServer.query` method to build a server;
+see :py:class:`ExampleDNSServer` for a minimal implementation.
 """
 
 import functools
@@ -36,7 +36,7 @@ DEFAULT_QUERY_TIMEOUT: Final[float] = 10.0
 DEFAULT_RESPONSE_TIMEOUT: Final[float] = 10.0
 
 
-class DnsTransport(StrEnum):
+class DNSTransport(StrEnum):
     """The transport protocol over which a DNS message was received."""
 
     UDP = "udp"
@@ -45,7 +45,7 @@ class DnsTransport(StrEnum):
 
 
 @dataclass(frozen=True)
-class DnsClientContext:
+class DNSClientContext:
     """Connection metadata for a DNS client.
 
     Instances describe the transport and the remote and local addresses
@@ -53,7 +53,7 @@ class DnsClientContext:
     to make policy decisions based on where a query came from.
     """
 
-    transport: DnsTransport
+    transport: DNSTransport
     remote_address: str
     remote_port: int
     local_address: str | None = None
@@ -66,7 +66,7 @@ class DnsClientContext:
         remote_address: str,
         remote_port: int,
     ) -> Self:
-        """Create a DnsClientContext for a datagram received on a UDP socket.
+        """Create a DNSClientContext for a datagram received on a UDP socket.
 
         :param udp_socket: The socket on which the datagram was received;
             used to determine the local address and port.
@@ -76,14 +76,14 @@ class DnsClientContext:
         :param remote_port: The port the datagram was sent from.
         :type remote_port: int
         :returns: A context with the transport set to
-            :py:attr:`DnsTransport.UDP`.
-        :rtype: :py:class:`DnsClientContext`
+            :py:attr:`DNSTransport.UDP`.
+        :rtype: :py:class:`DNSClientContext`
         """
 
         local_address, local_port = udp_socket.extra(SocketAttribute.local_address)  # type: ignore
 
         return cls(
-            transport=DnsTransport.UDP,
+            transport=DNSTransport.UDP,
             remote_address=remote_address,
             remote_port=remote_port,
             local_address=str(local_address),
@@ -92,7 +92,7 @@ class DnsClientContext:
 
     @classmethod
     def from_socket_stream(cls, socket_stream: SocketStream) -> Self:
-        """Create a DnsClientContext for a stream connection.
+        """Create a DNSClientContext for a stream connection.
 
         The remote and local addresses are taken from the stream's socket
         attributes.
@@ -100,9 +100,9 @@ class DnsClientContext:
         :param socket_stream: The stream over which the client is connected.
         :type socket_stream: :py:class:`anyio.abc.SocketStream`
         :returns: A context with the transport set to
-            :py:attr:`DnsTransport.TLS` if *socket_stream* is a TLS stream,
-            and :py:attr:`DnsTransport.TCP` otherwise.
-        :rtype: :py:class:`DnsClientContext`
+            :py:attr:`DNSTransport.TLS` if *socket_stream* is a TLS stream,
+            and :py:attr:`DNSTransport.TCP` otherwise.
+        :rtype: :py:class:`DNSClientContext`
         """
 
         remote_address, remote_port = socket_stream.extra(SocketAttribute.remote_address)  # type: ignore
@@ -110,9 +110,9 @@ class DnsClientContext:
 
         return cls(
             transport=(
-                DnsTransport.TLS
+                DNSTransport.TLS
                 if isinstance(socket_stream, TLSStream)
-                else DnsTransport.TCP
+                else DNSTransport.TCP
             ),
             remote_address=str(remote_address),
             remote_port=int(remote_port),
@@ -121,7 +121,7 @@ class DnsClientContext:
         )
 
 
-class QueryException(Exception):
+class DNSQueryException(dns.exception.DNSException):
     """The DNS query resulted in an error.
 
     Raised by query handlers to indicate that a query should be answered
@@ -130,7 +130,7 @@ class QueryException(Exception):
     """
 
     def __init__(self, error_message: str, query: dns.message.Message) -> None:
-        """Initialize a QueryException.
+        """Initialize a DNSQueryException.
 
         :param error_message: The error message.
         :type error_message: str
@@ -155,7 +155,7 @@ class QueryException(Exception):
             )
 
         return super().__init__(
-            (error_message or "Query exception")
+            (error_message or "DNS Query Exception")
             + ": "
             + ", ".join(f"{key}={value}" for key, value in parameters.items())
         )
@@ -172,7 +172,7 @@ class QueryException(Exception):
         return response
 
 
-class QueryRefused(QueryException):
+class DNSQueryRefused(DNSQueryException):
     """The DNS query was refused by the server.
 
     Raised by query handlers to indicate that a query should be answered
@@ -181,13 +181,13 @@ class QueryRefused(QueryException):
     """
 
     def __init__(self, query: dns.message.Message) -> None:
-        """Initialize a QueryRefused exception.
+        """Initialize a DNSQueryRefused exception.
 
         :param query: The query that was refused.
         :type query: :py:class:`dns.message.Message`
         """
 
-        return super().__init__("Query refused", query=query)
+        return super().__init__("DNS Query Refused", query=query)
 
     def get_response(self) -> dns.message.Message:
         """Generate a DNS response message for the exception.
@@ -201,7 +201,7 @@ class QueryRefused(QueryException):
         return response
 
 
-class DnsServer(ABC):
+class DNSServer(ABC):
     """An abstract asynchronous DNS server.
 
     The server listens for DNS queries over UDP, TCP, and TLS, decodes
@@ -338,7 +338,7 @@ class DnsServer(ABC):
             anyio.create_task_group() as tg,
         ):
             async for packet, (remote_address, remote_port) in udp_socket:
-                client_context = DnsClientContext.from_udp_socket(
+                client_context = DNSClientContext.from_udp_socket(
                     udp_socket, remote_address, remote_port
                 )
                 tg.start_soon(
@@ -420,7 +420,7 @@ class DnsServer(ABC):
         self,
         udp_socket: UDPSocket,
         packet: bytes,
-        client_context: DnsClientContext,
+        client_context: DNSClientContext,
     ) -> None:
         """Process a DNS query received over UDP and send any responses.
 
@@ -437,7 +437,7 @@ class DnsServer(ABC):
         :type packet: bytes
         :param client_context: The context of the client that sent the
             query.
-        :type client_context: :py:class:`DnsClientContext`
+        :type client_context: :py:class:`DNSClientContext`
         """
 
         self.logger.debug(
@@ -495,7 +495,7 @@ class DnsServer(ABC):
         :type socket_stream: :py:class:`anyio.abc.SocketStream`
         """
 
-        client_context = DnsClientContext.from_socket_stream(socket_stream)
+        client_context = DNSClientContext.from_socket_stream(socket_stream)
 
         self.logger.debug(
             "%s connection from %s:%d",
@@ -538,7 +538,7 @@ class DnsServer(ABC):
     async def handle_query(
         self,
         query: dns.message.Message,
-        client_context: DnsClientContext,
+        client_context: DNSClientContext,
     ) -> list[dns.message.Message] | None:
         """Validate a DNS query and dispatch it to :py:meth:`query`.
 
@@ -553,7 +553,7 @@ class DnsServer(ABC):
         :type query: :py:class:`dns.message.Message`
         :param client_context: The context of the client that sent the
             query.
-        :type client_context: :py:class:`DnsClientContext`
+        :type client_context: :py:class:`DNSClientContext`
         :returns: The response messages to send, or ``None`` if the query
             should not be answered.
         :rtype: list of :py:class:`dns.message.Message` or ``None``
@@ -576,7 +576,7 @@ class DnsServer(ABC):
         try:
             return await self.query(query, client_context)
 
-        except QueryException as exc:
+        except DNSQueryException as exc:
             self.logger.warning(str(exc))
             return [exc.get_response()]
 
@@ -594,7 +594,7 @@ class DnsServer(ABC):
     async def query(
         self,
         query: dns.message.Message,
-        client_context: DnsClientContext,
+        client_context: DNSClientContext,
     ) -> list[dns.message.Message] | None:
         """Process a DNS query and return the responses.
 
@@ -606,16 +606,16 @@ class DnsServer(ABC):
         :type query: :py:class:`dns.message.Message`
         :param client_context: The context of the client that sent the
             query.
-        :type client_context: :py:class:`DnsClientContext`
+        :type client_context: :py:class:`DNSClientContext`
         :returns: The response messages to send, or ``None`` if the query
             should not be answered.
         :rtype: list of :py:class:`dns.message.Message` or ``None``
-        :raises QueryException: If the query fails.
+        :raises DNSQueryException: If the query fails.
         """
         pass
 
 
-class ExampleDnsServer(DnsServer):
+class ExampleDNSServer(DNSServer):
     """An example DNS server implementation.
 
     The server answers A queries for ``localhost.example.com`` with
@@ -625,7 +625,7 @@ class ExampleDnsServer(DnsServer):
     async def query(
         self,
         query: dns.message.Message,
-        client_context: DnsClientContext,
+        client_context: DNSClientContext,
     ) -> list[dns.message.Message] | None:
         """Process a DNS query and return the responses.
 
@@ -633,10 +633,10 @@ class ExampleDnsServer(DnsServer):
         :type query: :py:class:`dns.message.Message`
         :param client_context: The context of the client that sent the
             query.
-        :type client_context: :py:class:`DnsClientContext`
+        :type client_context: :py:class:`DNSClientContext`
         :returns: The response messages to send.
         :rtype: list of :py:class:`dns.message.Message`
-        :raises QueryRefused: If the query is not an A query for
+        :raises DNSQueryRefused: If the query is not an A query for
             ``localhost.example.com``.
         """
 
@@ -673,7 +673,7 @@ class ExampleDnsServer(DnsServer):
                 )
                 return [response]
             case _:
-                raise QueryRefused(query=query)
+                raise DNSQueryRefused(query=query)
 
 
 def main() -> None:
@@ -690,7 +690,7 @@ def main() -> None:
     tcp_port = 5300
     tls_port = 8853
 
-    server = ExampleDnsServer()
+    server = ExampleDNSServer()
 
     anyio.run(
         functools.partial(
