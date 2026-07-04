@@ -1,3 +1,11 @@
+"""An example asynchronous DNS server framework.
+
+This module implements a small DNS server framework on top of anyio,
+supporting UDP, TCP, and TLS transports.  Subclass :py:class:`DnsServer`
+and implement its :py:meth:`DnsServer.query` method to build a server;
+see :py:class:`ExampleDnsServer` for a minimal implementation.
+"""
+
 import functools
 import logging
 import ssl
@@ -26,6 +34,8 @@ import dns.rrset
 
 
 class DnsTransport(StrEnum):
+    """The transport protocol over which a DNS message was received."""
+
     UDP = "udp"
     TCP = "tcp"
     TLS = "tls"
@@ -33,6 +43,13 @@ class DnsTransport(StrEnum):
 
 @dataclass(frozen=True)
 class DnsClientContext:
+    """Connection metadata for a DNS client.
+
+    Instances describe the transport and the remote and local addresses
+    of a client whose query is being processed, allowing query handlers
+    to make policy decisions based on where a query came from.
+    """
+
     transport: DnsTransport
     remote_address: str
     remote_port: int
@@ -46,7 +63,19 @@ class DnsClientContext:
         remote_address: str,
         remote_port: int,
     ) -> Self:
-        """Create a DnsClientContext from a UDP socket and remote address/port"""
+        """Create a DnsClientContext for a datagram received on a UDP socket.
+
+        :param udp_socket: The socket on which the datagram was received;
+            used to determine the local address and port.
+        :type udp_socket: :py:class:`anyio.abc.UDPSocket`
+        :param remote_address: The address the datagram was sent from.
+        :type remote_address: str
+        :param remote_port: The port the datagram was sent from.
+        :type remote_port: int
+        :returns: A context with the transport set to
+            :py:attr:`DnsTransport.UDP`.
+        :rtype: :py:class:`DnsClientContext`
+        """
 
         local_address, local_port = udp_socket.extra(SocketAttribute.local_address)  # type: ignore
 
@@ -60,7 +89,18 @@ class DnsClientContext:
 
     @classmethod
     def from_socket_stream(cls, socket_stream: SocketStream) -> Self:
-        """Create a DnsClientContext from a socket stream"""
+        """Create a DnsClientContext for a stream connection.
+
+        The remote and local addresses are taken from the stream's socket
+        attributes.
+
+        :param socket_stream: The stream over which the client is connected.
+        :type socket_stream: :py:class:`anyio.abc.SocketStream`
+        :returns: A context with the transport set to
+            :py:attr:`DnsTransport.TLS` if *socket_stream* is a TLS stream,
+            and :py:attr:`DnsTransport.TCP` otherwise.
+        :rtype: :py:class:`DnsClientContext`
+        """
 
         remote_address, remote_port = socket_stream.extra(SocketAttribute.remote_address)  # type: ignore
         local_address, local_port = socket_stream.extra(SocketAttribute.local_address)  # type: ignore
@@ -79,9 +119,19 @@ class DnsClientContext:
 
 
 class QueryRefused(Exception):
+    """The DNS query was refused by the server.
+
+    Raised by query handlers to indicate that a query should be answered
+    with rcode REFUSED.  The exception message includes the opcode, id,
+    and question of the refused query.
+    """
 
     def __init__(self, query: dns.message.Message) -> None:
-        """Exception raised when a DNS query is refused."""
+        """Initialize a QueryRefused exception.
+
+        :param query: The query that was refused.
+        :type query: :py:class:`dns.message.Message`
+        """
 
         self.query = query
 
@@ -106,7 +156,25 @@ class QueryRefused(Exception):
 
 
 class DnsServer(ABC):
+    """An abstract asynchronous DNS server.
+
+    The server listens for DNS queries over UDP, TCP, and TLS, decodes
+    them, and dispatches them to the :py:meth:`query` method, which
+    subclasses must implement to provide the actual query processing
+    logic.
+    """
+
     def __init__(self, query_timeout: float = 10, response_timeout: float = 10) -> None:
+        """Initialize the DNS server.
+
+        :param query_timeout: The number of seconds to wait for a complete
+            query to arrive on a stream connection.
+        :type query_timeout: float
+        :param response_timeout: The number of seconds allowed for
+            processing a query and sending its responses.
+        :type response_timeout: float
+        """
+
         self.logger = logging.getLogger(__name__).getChild(self.__class__.__name__)
         self.query_timeout = query_timeout
         self.response_timeout = response_timeout
@@ -120,7 +188,32 @@ class DnsServer(ABC):
         certfile: str | None = None,
         keyfile: str | None = None,
     ) -> None:
-        """Start the DNS server"""
+        """Run the DNS server, starting listeners for the enabled transports.
+
+        This method runs until cancelled.
+
+        :param host: The address to listen on.  If ``None``, listen on all
+            IPv4 and IPv6 addresses.
+        :type host: str or ``None``
+        :param listen_udp: Whether to listen for UDP queries.  ``True``
+            listens on port 53; an ``int`` listens on that port; ``False``
+            disables UDP.
+        :type listen_udp: bool or int
+        :param listen_tcp: Whether to listen for TCP queries.  ``True``
+            listens on port 53; an ``int`` listens on that port; ``False``
+            disables TCP.
+        :type listen_tcp: bool or int
+        :param listen_tls: Whether to listen for TLS queries.  ``True``
+            listens on port 853; an ``int`` listens on that port; ``False``
+            disables TLS.
+        :type listen_tls: bool or int
+        :param certfile: The path to the TLS certificate chain file.  If
+            ``None``, a self-signed certificate is generated.
+        :type certfile: str or ``None``
+        :param keyfile: The path to the TLS private key file.  If ``None``,
+            the key is taken from *certfile*.
+        :type keyfile: str or ``None``
+        """
 
         async with anyio.create_task_group() as tg:
             if listen_udp:
@@ -173,7 +266,17 @@ class DnsServer(ABC):
         host: str,
         port: int = 53,
     ) -> None:
-        """Start UDP server to listen for DNS messages"""
+        """Listen for DNS queries over UDP.
+
+        Each received packet is handed off to
+        :py:meth:`handle_udp_client` in its own task.  This method runs
+        until cancelled.
+
+        :param host: The local address to bind to.
+        :type host: str
+        :param port: The local port to bind to.
+        :type port: int
+        """
 
         self.logger.info("DNS UDP server listening to %s:%d", host or "*", port)
 
@@ -197,7 +300,17 @@ class DnsServer(ABC):
         host: str | None = None,
         port: int = 53,
     ) -> None:
-        """Start TCP server to listen for DNS messages"""
+        """Listen for DNS queries over TCP.
+
+        Each accepted connection is served by
+        :py:meth:`handle_tcp_client`.  This method runs until cancelled.
+
+        :param host: The local address to bind to.  If ``None``, listen on
+            all addresses.
+        :type host: str or ``None``
+        :param port: The local port to bind to.
+        :type port: int
+        """
 
         self.logger.info("DNS TCP server listening to %s:%d", host or "*", port)
 
@@ -213,7 +326,28 @@ class DnsServer(ABC):
         keyfile: str | None = None,
         hostname: str | None = None,
     ) -> None:
-        """Start TLS server to listen for DNS messages"""
+        """Listen for DNS queries over TLS (DNS-over-TLS).
+
+        Each accepted connection is served by
+        :py:meth:`handle_tcp_client`.  This method runs until cancelled.
+
+        :param host: The local address to bind to.  If ``None``, listen on
+            all addresses.
+        :type host: str or ``None``
+        :param port: The local port to bind to.
+        :type port: int
+        :param certfile: The path to the TLS certificate chain file.  If
+            ``None``, a self-signed certificate for *hostname* is generated
+            using trustme.
+        :type certfile: str or ``None``
+        :param keyfile: The path to the TLS private key file.  If ``None``,
+            the key is taken from *certfile*.
+        :type keyfile: str or ``None``
+        :param hostname: The hostname to use for the self-signed
+            certificate; defaults to ``"localhost"``.  Ignored if
+            *certfile* is given.
+        :type hostname: str or ``None``
+        """
 
         self.logger.info("DNS TLS server listening to %s:%d", host or "*", port)
 
@@ -238,7 +372,23 @@ class DnsServer(ABC):
         packet: bytes,
         client_context: DnsClientContext,
     ) -> None:
-        """Process UDP queries and responses"""
+        """Process a DNS query received over UDP and send any responses.
+
+        The packet is parsed into a query and dispatched to
+        :py:meth:`handle_query`; any responses are sent back to the
+        client, truncated if they exceed the client's advertised EDNS
+        payload size (or the 512 byte default).  Packets that cannot be
+        parsed are silently ignored.
+
+        :param udp_socket: The socket on which the packet was received and
+            on which responses will be sent.
+        :type udp_socket: :py:class:`anyio.abc.UDPSocket`
+        :param packet: The DNS query in wire format.
+        :type packet: bytes
+        :param client_context: The context of the client that sent the
+            query.
+        :type client_context: :py:class:`DnsClientContext`
+        """
 
         self.logger.debug(
             "UDP packet from %s:%d",
@@ -280,7 +430,20 @@ class DnsServer(ABC):
         self,
         socket_stream: SocketStream,
     ) -> None:
-        """Process TCP queries and responses"""
+        """Process DNS queries received over a stream connection.
+
+        Queries are read from the stream, each prefixed with a two byte
+        length as specified by RFC 1035, section 4.2.2, and dispatched to
+        :py:meth:`handle_query`; any responses are written back to the
+        stream.  The connection is served until closed by the client, a
+        timeout occurs, or an unparseable query is received.
+
+        This method is used for both TCP and TLS connections.
+
+        :param socket_stream: The stream over which the client is
+            connected.
+        :type socket_stream: :py:class:`anyio.abc.SocketStream`
+        """
 
         client_context = DnsClientContext.from_socket_stream(socket_stream)
 
@@ -327,7 +490,24 @@ class DnsServer(ABC):
         query: dns.message.Message,
         client_context: DnsClientContext,
     ) -> list[dns.message.Message] | None:
-        """Handle DNS query message and return response messages if applicable"""
+        """Validate a DNS query and dispatch it to :py:meth:`query`.
+
+        Messages with the QR flag set are ignored, and queries whose
+        question section does not contain exactly one question are
+        answered with FORMERR.  Valid queries are passed to
+        :py:meth:`query`; a :py:class:`QueryRefused` exception raised by
+        it produces a REFUSED response, and any other exception produces
+        a SERVFAIL response.
+
+        :param query: The query to handle.
+        :type query: :py:class:`dns.message.Message`
+        :param client_context: The context of the client that sent the
+            query.
+        :type client_context: :py:class:`DnsClientContext`
+        :returns: The response messages to send, or ``None`` if the query
+            should not be answered.
+        :rtype: list of :py:class:`dns.message.Message` or ``None``
+        """
 
         t1 = time.perf_counter()
 
@@ -377,19 +557,50 @@ class DnsServer(ABC):
         query: dns.message.Message,
         client_context: DnsClientContext,
     ) -> list[dns.message.Message] | None:
-        """Process DNS query message and return response messages if applicable"""
+        """Process a DNS query and return the responses.
+
+        Subclasses must implement this method to provide the server's
+        query processing logic.  The query is guaranteed to have exactly
+        one question.
+
+        :param query: The query to process.
+        :type query: :py:class:`dns.message.Message`
+        :param client_context: The context of the client that sent the
+            query.
+        :type client_context: :py:class:`DnsClientContext`
+        :returns: The response messages to send, or ``None`` if the query
+            should not be answered.
+        :rtype: list of :py:class:`dns.message.Message` or ``None``
+        :raises QueryRefused: If the query should be answered with rcode
+            REFUSED.
+        """
         pass
 
 
 class ExampleDnsServer(DnsServer):
-    """Example implementation of a DNS server that handles specific queries"""
+    """An example DNS server implementation.
+
+    The server answers A queries for ``localhost.example.com`` with
+    ``127.0.0.1`` and refuses all other queries.
+    """
 
     async def query(
         self,
         query: dns.message.Message,
         client_context: DnsClientContext,
     ) -> list[dns.message.Message] | None:
-        """Process DNS query message and return response messages if applicable"""
+        """Process a DNS query and return the responses.
+
+        :param query: The query to process.
+        :type query: :py:class:`dns.message.Message`
+        :param client_context: The context of the client that sent the
+            query.
+        :type client_context: :py:class:`DnsClientContext`
+        :returns: The response messages to send.
+        :rtype: list of :py:class:`dns.message.Message`
+        :raises QueryRefused: If the query is not an A query for
+            ``localhost.example.com``.
+        """
 
         opcode = query.opcode()
         qname = query.question[0].name
@@ -428,7 +639,11 @@ class ExampleDnsServer(DnsServer):
 
 
 def main() -> None:
-    """Run the DNS server"""
+    """Run the example DNS server.
+
+    The server listens on 127.0.0.1 with UDP and TCP on port 5300 and
+    TLS on port 8853, using a self-signed certificate.
+    """
 
     logging.basicConfig(level=logging.DEBUG)
 
