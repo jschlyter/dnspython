@@ -14,7 +14,7 @@ import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Self
+from typing import Final, Self
 
 import anyio
 import trustme
@@ -31,6 +31,9 @@ import dns.rcode
 import dns.rdataclass
 import dns.rdatatype
 import dns.rrset
+
+DEFAULT_QUERY_TIMEOUT: Final[float] = 10.0
+DEFAULT_RESPONSE_TIMEOUT: Final[float] = 10.0
 
 
 class DnsTransport(StrEnum):
@@ -207,7 +210,11 @@ class DnsServer(ABC):
     logic.
     """
 
-    def __init__(self, query_timeout: float = 10, response_timeout: float = 10) -> None:
+    def __init__(
+        self,
+        query_timeout: float = DEFAULT_QUERY_TIMEOUT,
+        response_timeout: float = DEFAULT_RESPONSE_TIMEOUT,
+    ) -> None:
         """Initialize the DNS server.
 
         :param query_timeout: The number of seconds to wait for a complete
