@@ -353,7 +353,7 @@ class DnsServer(ABC):
         """Listen for DNS queries over TCP.
 
         Each accepted connection is served by
-        :py:meth:`handle_tcp_client`.  This method runs until cancelled.
+        :py:meth:`handle_socket_stream_client`.  This method runs until cancelled.
 
         :param host: The local address to bind to.  If ``None``, listen on
             all addresses.
@@ -366,7 +366,7 @@ class DnsServer(ABC):
 
         tcp_listener = await anyio.create_tcp_listener(local_host=host, local_port=port)
 
-        await tcp_listener.serve(self.handle_tcp_client)
+        await tcp_listener.serve(self.handle_socket_stream_client)
 
     async def tls_server(
         self,
@@ -379,7 +379,7 @@ class DnsServer(ABC):
         """Listen for DNS queries over TLS (DNS-over-TLS).
 
         Each accepted connection is served by
-        :py:meth:`handle_tcp_client`.  This method runs until cancelled.
+        :py:meth:`handle_socket_stream_client`.  This method runs until cancelled.
 
         :param host: The local address to bind to.  If ``None``, listen on
             all addresses.
@@ -414,7 +414,7 @@ class DnsServer(ABC):
             context,
         )
 
-        await tls_listener.serve(self.handle_tcp_client)
+        await tls_listener.serve(self.handle_socket_stream_client)
 
     async def handle_udp_client(
         self,
@@ -476,7 +476,7 @@ class DnsServer(ABC):
         except Exception as exc:
             self.logger.error(f"Error responding to DNS query: {exc}", exc_info=exc)
 
-    async def handle_tcp_client(
+    async def handle_socket_stream_client(
         self,
         socket_stream: SocketStream,
     ) -> None:
