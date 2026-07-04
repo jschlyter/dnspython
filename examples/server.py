@@ -458,7 +458,7 @@ class DnsServer(ABC):
                     client_context=client_context,
                 ):
                     multi = len(responses) > 1
-                    self.logger.debug("Returning %d DNS messages", len(responses))  # type: ignore
+                    self.logger.debug("Returning %d DNS messages", len(responses))
                     # Truncate responses that exceed the client's advertised EDNS
                     # payload size (or the 512 byte default), setting the TC flag
                     max_size = query.payload if query.edns >= 0 else 512
@@ -545,8 +545,8 @@ class DnsServer(ABC):
         Messages with the QR flag set are ignored, and queries whose
         question section does not contain exactly one question are
         answered with FORMERR.  Valid queries are passed to
-        :py:meth:`query`; a :py:class:`QueryRefused` exception raised by
-        it produces a REFUSED response, and any other exception produces
+        :py:meth:`query`; a :py:class:`QueryException` exception raised by
+        it produces an error response, and any other exception produces
         a SERVFAIL response.
 
         :param query: The query to handle.
