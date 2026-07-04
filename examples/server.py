@@ -645,6 +645,10 @@ class ExampleDNSServer(DNSServer):
         rdtype = query.question[0].rdtype
         rdclass = query.question[0].rdclass
 
+        # Do not response to queries that do not have the Recursion Desired (RD) flag set
+        if not query.flags & dns.flags.RD:
+            raise DNSQueryRefused(query=query)
+
         # Match the query against specific criteria and handle accordingly
         match (opcode, str(qname), rdtype, rdclass):
             case (
