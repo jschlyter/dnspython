@@ -6,7 +6,9 @@ and implement its :py:meth:`DNSServer.query` method to build a server;
 see :py:class:`ExampleDNSServer` for a minimal implementation.
 """
 
+import argparse
 import functools
+import ipaddress
 import logging
 import ssl
 import struct
@@ -237,6 +239,7 @@ class DNSServer(ABC):
         listen_tls: bool | int = False,
         certfile: str | None = None,
         keyfile: str | None = None,
+        hostname: str | None = None,
     ) -> None:
         """Run the DNS server, starting listeners for the enabled transports.
 
@@ -263,6 +266,10 @@ class DNSServer(ABC):
         :param keyfile: The path to the TLS private key file.  If ``None``,
             the key is taken from *certfile*.
         :type keyfile: str or ``None``
+        :param hostname: The hostname to use for the self-signed
+            certificate; defaults to ``"localhost"``.  Ignored if
+            *certfile* is given.
+        :type hostname: str or ``None``
         """
 
         async with anyio.create_task_group() as tg:
@@ -306,6 +313,7 @@ class DNSServer(ABC):
                         self.tls_server,
                         host=host,
                         port=853 if listen_tls is True else listen_tls,
+                        hostname=hostname,
                         certfile=certfile,
                         keyfile=keyfile,
                     )
@@ -687,22 +695,72 @@ def main() -> None:
     TLS on port 8853, using a self-signed certificate.
     """
 
-    logging.basicConfig(level=logging.DEBUG)
+    parser = argparse.ArgumentParser()
 
-    host = "127.0.0.1"
-    udp_port = 5300
-    tcp_port = 5300
-    tls_port = 8853
+    parser.add_argument(
+        "--listen",
+        metavar="ADDRESS",
+        type=str,
+        help="Address to listen on",
+        default="127.0.0.1",
+    )
+    parser.add_argument(
+        "--udp-port",
+        metavar="PORT",
+        type=int,
+        help="UDP port to listen on (set to 0 to disable UDP)",
+        default=8053,
+    )
+    parser.add_argument(
+        "--tcp-port",
+        metavar="PORT",
+        type=int,
+        help="TCP port to listen on (set to 0 to disable TCP)",
+        default=8053,
+    )
+    parser.add_argument(
+        "--tls-port",
+        metavar="PORT",
+        type=int,
+        help="TLS port to listen on (set to 0 to disable TLS)",
+        default=8853,
+    )
+    parser.add_argument(
+        "--hostname",
+        metavar="HOSTNAME",
+        type=str,
+        help="Hostname for self-signed TLS certificate",
+        default="localhost",
+    )
+    parser.add_argument(
+        "--certfile",
+        metavar="CERTFILE",
+        type=str,
+        help="Path to TLS certificate file (self-signed if not provided)",
+    )
+    parser.add_argument(
+        "--keyfile",
+        metavar="KEYFILE",
+        type=str,
+        help="Path to TLS private key file (taken from certfile if not provided)",
+    )
+
+    args = parser.parse_args()
+
+    logging.basicConfig(level=logging.DEBUG)
 
     server = ExampleDNSServer()
 
     anyio.run(
         functools.partial(
             server.run,
-            host=host,
-            listen_udp=udp_port,
-            listen_tcp=tcp_port,
-            listen_tls=tls_port,
+            host=args.listen,
+            listen_udp=args.udp_port or False,
+            listen_tcp=args.tcp_port or False,
+            listen_tls=args.tls_port or False,
+            certfile=args.certfile,
+            keyfile=args.keyfile,
+            hostname=args.hostname,
         )
     )
 
