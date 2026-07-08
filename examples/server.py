@@ -131,7 +131,12 @@ class DNSQueryException(dns.exception.DNSException):
     and question of the query.
     """
 
-    def __init__(self, error_message: str, query: dns.message.Message) -> None:
+    def __init__(
+        self,
+        error_message: str,
+        query: dns.message.Message,
+        rcode: dns.rcode.Rcode = dns.rcode.SERVFAIL,
+    ) -> None:
         """Initialize a DNSQueryException.
 
         :param error_message: The error message.
@@ -141,6 +146,7 @@ class DNSQueryException(dns.exception.DNSException):
         """
 
         self.query = query
+        self.rcode = rcode
 
         parameters: dict[str, str] = {
             "opcode": dns.opcode.to_text(self.query.opcode()),
@@ -170,7 +176,7 @@ class DNSQueryException(dns.exception.DNSException):
         """
 
         response = dns.message.make_response(self.query)
-        response.set_rcode(dns.rcode.SERVFAIL)
+        response.set_rcode(self.rcode)
         return response
 
 
@@ -189,18 +195,7 @@ class DNSQueryRefused(DNSQueryException):
         :type query: :py:class:`dns.message.Message`
         """
 
-        return super().__init__("DNS Query Refused", query=query)
-
-    def get_response(self) -> dns.message.Message:
-        """Generate a DNS response message for the exception.
-
-        :returns: A DNS response message with the appropriate error code.
-        :rtype: :py:class:`dns.message.Message`
-        """
-
-        response = dns.message.make_response(self.query)
-        response.set_rcode(dns.rcode.REFUSED)
-        return response
+        super().__init__("DNS Query Refused", query=query, rcode=dns.rcode.REFUSED)
 
 
 class DNSServer(ABC):
