@@ -118,81 +118,6 @@ class DNSClientContext:
         )
 
 
-class DNSQueryException(dns.exception.DNSException):
-    """The DNS query resulted in an error.
-
-    Raised by query handlers to indicate that a query should be answered
-    with an error. The exception message includes the opcode, id,
-    and question of the query.
-    """
-
-    def __init__(
-        self,
-        error_message: str,
-        query: dns.message.Message,
-        rcode: dns.rcode.Rcode = dns.rcode.SERVFAIL,
-    ) -> None:
-        """Initialize a DNSQueryException.
-
-        :param error_message: The error message.
-        :type error_message: str
-        :param query: The query that resulted in an error.
-        :type query: :py:class:`dns.message.Message`
-        """
-
-        self.query = query
-        self.rcode = rcode
-
-        parameters: dict[str, str] = {
-            "opcode": dns.opcode.to_text(self.query.opcode()),
-            "id": str(self.query.id),
-        }
-
-        if query.question:
-            parameters.update(
-                {
-                    "qname": query.question[0].name.to_text(),
-                    "qtype": dns.rdatatype.to_text(query.question[0].rdtype),
-                    "qclass": dns.rdataclass.to_text(query.question[0].rdclass),
-                }
-            )
-
-        return super().__init__(
-            (error_message or "DNS Query Exception")
-            + ": "
-            + ", ".join(f"{key}={value}" for key, value in parameters.items())
-        )
-
-    def get_response(self) -> dns.message.Message:
-        """Generate a DNS response message for the exception.
-
-        :returns: A DNS response message with the appropriate error code.
-        :rtype: :py:class:`dns.message.Message`
-        """
-
-        response = dns.message.make_response(self.query)
-        response.set_rcode(self.rcode)
-        return response
-
-
-class DNSQueryRefused(DNSQueryException):
-    """The DNS query was refused by the server.
-
-    Raised by query handlers to indicate that a query should be answered
-    with rcode REFUSED.  The exception message includes the opcode, id,
-    and question of the refused query.
-    """
-
-    def __init__(self, query: dns.message.Message) -> None:
-        """Initialize a DNSQueryRefused exception.
-
-        :param query: The query that was refused.
-        :type query: :py:class:`dns.message.Message`
-        """
-
-        super().__init__("DNS Query Refused", query=query, rcode=dns.rcode.REFUSED)
-
-
 class DNSServer(ABC):
     """An abstract asynchronous DNS server.
 
@@ -244,7 +169,7 @@ class DNSServer(ABC):
         :type listen_udp: bool or int
         :param listen_tcp: Whether to listen for TCP queries.  ``True``
             listens on port 53; an ``int`` listens on that port; ``False``
-            disables TCP.
+            disables TCP
         :type listen_tcp: bool or int
         :param listen_tls: Whether to listen for TLS queries.  ``True``
             listens on port 853; an ``int`` listens on that port; ``False``
@@ -576,10 +501,6 @@ class DNSServer(ABC):
         try:
             return await self.query(query, client_context)
 
-        except DNSQueryException as exc:
-            self.logger.warning(str(exc))
-            return [exc.get_response()]
-
         except Exception as exc:
             self.logger.warning(f"Query processing failed: {exc}")
             response = dns.message.make_response(query)
@@ -610,7 +531,6 @@ class DNSServer(ABC):
         :returns: The response messages to send, or ``None`` if the query
             should not be answered.
         :rtype: list of :py:class:`dns.message.Message` or :py:class:`bytes`, or ``None``
-        :raises DNSQueryException: If the query fails.
         """
         pass
 
@@ -636,8 +556,6 @@ class ExampleDNSServer(DNSServer):
         :type client_context: :py:class:`DNSClientContext`
         :returns: The response messages to send.
         :rtype: list of :py:class:`dns.message.Message` or :py:class:`bytes`, or ``None``
-        :raises DNSQueryRefused: If the query is not an A query for
-            ``localhost.example.com``.
         """
 
         opcode = query.opcode()
@@ -647,7 +565,9 @@ class ExampleDNSServer(DNSServer):
 
         # Do not response to queries that do not have the Recursion Desired (RD) flag set
         if not query.flags & dns.flags.RD:
-            raise DNSQueryRefused(query=query)
+            response = dns.message.make_response(query)
+            response.set_rcode(dns.rcode.REFUSED)
+            return [response]
 
         # Match the query against specific criteria and handle accordingly
         match (opcode, str(qname), rdtype, rdclass):
@@ -677,7 +597,9 @@ class ExampleDNSServer(DNSServer):
                 )
                 return [response]
             case _:
-                raise DNSQueryRefused(query=query)
+                response = dns.message.make_response(query)
+                response.set_rcode(dns.rcode.REFUSED)
+                return [response]
 
 
 def main() -> None:
