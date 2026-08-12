@@ -457,7 +457,11 @@ class DNSServer(ABC):
                     # payload size (or the 512 byte default), setting the TC flag
                     max_size = query.payload if query.edns >= 0 else 512
                     for response in responses:
-                        raw_response = response.to_wire(multi=multi, max_size=max_size, prefer_truncation=True)
+                        raw_response = (
+                            response.to_wire(multi=multi, max_size=max_size, prefer_truncation=True)
+                            if isinstance(response, dns.message.Message)
+                            else response
+                        )
                         await udp_socket.sendto(
                             raw_response,
                             client_context.remote_address,
@@ -517,7 +521,11 @@ class DNSServer(ABC):
                         client_context=client_context,
                     ):
                         for response in responses:
-                            raw_response = response.to_wire(prepend_length=True)
+                            raw_response = (
+                                response.to_wire(prepend_length=True)
+                                if isinstance(response, dns.message.Message)
+                                else response
+                            )
                             await socket_stream.send(raw_response)
                         self.logger.debug("Returned %d DNS messages", len(responses))
         except (anyio.EndOfStream, anyio.IncompleteRead):
@@ -531,7 +539,7 @@ class DNSServer(ABC):
         self,
         query: dns.message.Message,
         client_context: DNSClientContext,
-    ) -> list[dns.message.Message] | None:
+    ) -> list[dns.message.Message | bytes] | None:
         """Validate a DNS query and dispatch it to :py:meth:`query`.
 
         Messages with the QR flag set are ignored, and queries whose
@@ -587,7 +595,7 @@ class DNSServer(ABC):
         self,
         query: dns.message.Message,
         client_context: DNSClientContext,
-    ) -> list[dns.message.Message] | None:
+    ) -> list[dns.message.Message | bytes] | None:
         """Process a DNS query and return the responses.
 
         Subclasses must implement this method to provide the server's
@@ -601,7 +609,7 @@ class DNSServer(ABC):
         :type client_context: :py:class:`DNSClientContext`
         :returns: The response messages to send, or ``None`` if the query
             should not be answered.
-        :rtype: list of :py:class:`dns.message.Message` or ``None``
+        :rtype: list of :py:class:`dns.message.Message` or :py:class:`bytes`, or ``None``
         :raises DNSQueryException: If the query fails.
         """
         pass
@@ -618,7 +626,7 @@ class ExampleDNSServer(DNSServer):
         self,
         query: dns.message.Message,
         client_context: DNSClientContext,
-    ) -> list[dns.message.Message] | None:
+    ) -> list[dns.message.Message | bytes] | None:
         """Process a DNS query and return the responses.
 
         :param query: The query to process.
@@ -627,7 +635,7 @@ class ExampleDNSServer(DNSServer):
             query.
         :type client_context: :py:class:`DNSClientContext`
         :returns: The response messages to send.
-        :rtype: list of :py:class:`dns.message.Message`
+        :rtype: list of :py:class:`dns.message.Message` or :py:class:`bytes`, or ``None``
         :raises DNSQueryRefused: If the query is not an A query for
             ``localhost.example.com``.
         """
