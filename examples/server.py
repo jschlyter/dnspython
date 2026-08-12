@@ -110,11 +110,7 @@ class DNSClientContext:
         local_address, local_port = socket_stream.extra(SocketAttribute.local_address)  # type: ignore
 
         return cls(
-            transport=(
-                DNSTransport.TLS
-                if isinstance(socket_stream, TLSStream)
-                else DNSTransport.TCP
-            ),
+            transport=(DNSTransport.TLS if isinstance(socket_stream, TLSStream) else DNSTransport.TCP),
             remote_address=str(remote_address),
             remote_port=int(remote_port),
             local_address=str(local_address),
@@ -340,12 +336,8 @@ class DNSServer(ABC):
             anyio.create_task_group() as tg,
         ):
             async for packet, (remote_address, remote_port) in udp_socket:
-                client_context = DNSClientContext.from_udp_socket(
-                    udp_socket, remote_address, remote_port
-                )
-                tg.start_soon(
-                    self.handle_udp_client, udp_socket, packet, client_context
-                )
+                client_context = DNSClientContext.from_udp_socket(udp_socket, remote_address, remote_port)
+                tg.start_soon(self.handle_udp_client, udp_socket, packet, client_context)
 
     async def tcp_server(
         self,
@@ -465,9 +457,7 @@ class DNSServer(ABC):
                     # payload size (or the 512 byte default), setting the TC flag
                     max_size = query.payload if query.edns >= 0 else 512
                     for response in responses:
-                        raw_response = response.to_wire(
-                            multi=multi, max_size=max_size, prefer_truncation=True
-                        )
+                        raw_response = response.to_wire(multi=multi, max_size=max_size, prefer_truncation=True)
                         await udp_socket.sendto(
                             raw_response,
                             client_context.remote_address,
