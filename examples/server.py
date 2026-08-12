@@ -8,7 +8,6 @@ see :py:class:`ExampleDNSServer` for a minimal implementation.
 
 import argparse
 import functools
-import ipaddress
 import logging
 import ssl
 import struct
