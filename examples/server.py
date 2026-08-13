@@ -106,11 +106,17 @@ class DNSClientContext:
         :rtype: :py:class:`DNSClientContext`
         """
 
-        remote_address, remote_port = socket_stream.extra(SocketAttribute.remote_address)  # type: ignore
+        remote_address, remote_port = socket_stream.extra(
+            SocketAttribute.remote_address
+        )  # type: ignore
         local_address, local_port = socket_stream.extra(SocketAttribute.local_address)  # type: ignore
 
         return cls(
-            transport=(DNSTransport.TLS if isinstance(socket_stream, TLSStream) else DNSTransport.TCP),
+            transport=(
+                DNSTransport.TLS
+                if isinstance(socket_stream, TLSStream)
+                else DNSTransport.TCP
+            ),
             remote_address=str(remote_address),
             remote_port=int(remote_port),
             local_address=str(local_address),
@@ -261,8 +267,12 @@ class DNSServer(ABC):
             anyio.create_task_group() as tg,
         ):
             async for packet, (remote_address, remote_port) in udp_socket:
-                client_context = DNSClientContext.from_udp_socket(udp_socket, remote_address, remote_port)
-                tg.start_soon(self.handle_udp_client, udp_socket, packet, client_context)
+                client_context = DNSClientContext.from_udp_socket(
+                    udp_socket, remote_address, remote_port
+                )
+                tg.start_soon(
+                    self.handle_udp_client, udp_socket, packet, client_context
+                )
 
     async def tcp_server(
         self,
@@ -383,7 +393,9 @@ class DNSServer(ABC):
                     max_size = query.payload if query.edns >= 0 else 512
                     for response in responses:
                         raw_response = (
-                            response.to_wire(multi=multi, max_size=max_size, prefer_truncation=True)
+                            response.to_wire(
+                                multi=multi, max_size=max_size, prefer_truncation=True
+                            )
                             if isinstance(response, dns.message.Message)
                             else response
                         )
@@ -460,45 +472,63 @@ class DNSServer(ABC):
         except Exception as exc:
             self.logger.error(f"Error responding to DNS query: {exc}", exc_info=exc)
 
-    async def handle_query(
+    async def validate_query(
         self,
         query: dns.message.Message,
         client_context: DNSClientContext,
     ) -> list[dns.message.Message | bytes] | None:
-        """Validate a DNS query and dispatch it to :py:meth:`query`.
-
-        Messages with the QR flag set are ignored, and queries whose
-        question section does not contain exactly one question are
-        answered with FORMERR.  Valid queries are passed to
-        :py:meth:`query`; a :py:class:`QueryException` exception raised by
-        it produces an error response, and any other exception produces
-        a SERVFAIL response.
+        """Validate a DNS query and return a response if invalid.
 
         :param query: The query to handle.
         :type query: :py:class:`dns.message.Message`
         :param client_context: The context of the client that sent the
             query.
         :type client_context: :py:class:`DNSClientContext`
-        :returns: The response messages to send, or ``None`` if the query
-            should not be answered.
-        :rtype: list of :py:class:`dns.message.Message` or ``None``
+        :returns: The response error messages to send.
+        :rtype: list of :py:class:`dns.message.Message` or :py:class:`bytes`
+            on error, or ``None`` if message is valid and should be processed
+            by :py:meth:`query`.
         """
-
-        t1 = time.perf_counter()
 
         # Silently ignore messages that are themselves responses (QR flag
         # set); answering them could create a reflection loop between servers
         if query.flags & dns.flags.QR:
             self.logger.warning("Ignoring message with QR flag set")
-            return None
+            return []
 
+        # Reject queries that do not have exactly one question; RFC 1035, section 4.1.1,
+        # requires that the question section contain exactly one question, and
+        # RFC 2181, section 5.4.1, states that a server should respond with FORMERR to
+        # queries that do not conform to this requirement.
         if len(query.question) != 1:
             self.logger.warning("Refusing query with %d questions", len(query.question))
             response = dns.message.make_response(query)
             response.set_rcode(dns.rcode.FORMERR)
             return [response]
 
+    async def handle_query(
+        self,
+        query: dns.message.Message,
+        client_context: DNSClientContext,
+    ) -> list[dns.message.Message | bytes]:
+        """Handle a DNS query and dispatch it to :py:meth:`query`.
+
+        :param query: The query to handle.
+        :type query: :py:class:`dns.message.Message`
+        :param client_context: The context of the client that sent the
+            query.
+        :type client_context: :py:class:`DNSClientContext`
+        :returns: The response messages to send.
+        :rtype: list of :py:class:`dns.message.Message` or :py:class:`bytes`
+        """
+
+        t1 = time.perf_counter()
+
         try:
+            response_check = await self.validate_query(query, client_context)
+            if response_check is not None:
+                return response_check
+
             return await self.query(query, client_context)
 
         except Exception as exc:
@@ -516,7 +546,7 @@ class DNSServer(ABC):
         self,
         query: dns.message.Message,
         client_context: DNSClientContext,
-    ) -> list[dns.message.Message | bytes] | None:
+    ) -> list[dns.message.Message | bytes]:
         """Process a DNS query and return the responses.
 
         Subclasses must implement this method to provide the server's
@@ -528,9 +558,8 @@ class DNSServer(ABC):
         :param client_context: The context of the client that sent the
             query.
         :type client_context: :py:class:`DNSClientContext`
-        :returns: The response messages to send, or ``None`` if the query
-            should not be answered.
-        :rtype: list of :py:class:`dns.message.Message` or :py:class:`bytes`, or ``None``
+        :returns: The response messages to send.
+        :rtype: list of :py:class:`dns.message.Message` or :py:class:`bytes`
         """
         pass
 
@@ -546,7 +575,7 @@ class ExampleDNSServer(DNSServer):
         self,
         query: dns.message.Message,
         client_context: DNSClientContext,
-    ) -> list[dns.message.Message | bytes] | None:
+    ) -> list[dns.message.Message | bytes]:
         """Process a DNS query and return the responses.
 
         :param query: The query to process.
@@ -555,7 +584,7 @@ class ExampleDNSServer(DNSServer):
             query.
         :type client_context: :py:class:`DNSClientContext`
         :returns: The response messages to send.
-        :rtype: list of :py:class:`dns.message.Message` or :py:class:`bytes`, or ``None``
+        :rtype: list of :py:class:`dns.message.Message` or :py:class:`bytes`
         """
 
         opcode = query.opcode()
