@@ -50,6 +50,7 @@ doq = ["aioquic>=1.3.0"]
 idna = ["idna>=3.20"]
 trio = ["trio>=0.34"]
 wmi = ["wmi>=1.5.1; platform_system=='Windows'"]
+cli = ["typer>=0.28.0"]
 
 [project.urls]
 homepage = "https://www.dnspython.org"
