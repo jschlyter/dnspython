@@ -19,7 +19,7 @@ def load_private_key(filename: str) -> GenericPrivateKey:
     with open(filename, "rb") as fp:
         key_data = json.load(fp)
 
-    if not (dnssec_algorithm := key_data.get("dnssec_algorithm")):
+    if not (dnssec_algorithm := key_data.pop("dnssec_algorithm", None)):
         raise ValueError("Missing dnssec_algorithm in key data")
 
     if not (private_cls := name_to_cls.get(dnssec_algorithm)):
@@ -162,14 +162,15 @@ def main():
     generate_key_parser.add_argument(
         "--algorithm",
         metavar="ALGORITHM",
-        help="DNSSEC algorithm",
+        help="Key algorithm",
+        choices=name_to_cls.keys(),
         required=True,
     )
     generate_key_parser.add_argument(
         "--size",
         metavar="KEY_SIZE",
         type=int,
-        help="Key size",
+        help="Key size (required for RSA and DSA)",
         default=None,
     )
 
