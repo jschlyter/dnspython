@@ -9,6 +9,7 @@ import dns.dnssec
 import dns.zone
 from dns.dnssecalgs import algorithms
 from dns.dnssecalgs.base import GenericPrivateKey
+from dns.dnssectypes import Algorithm
 
 name_to_cls = {a.name.upper(): cls for ((a, _), cls) in algorithms.items()}
 
@@ -19,11 +20,13 @@ def load_private_key(filename: str) -> GenericPrivateKey:
     with open(filename, "rb") as fp:
         key_data = json.load(fp)
 
-    if not (dnssec_algorithm := key_data.pop("dnssec_algorithm", None)):
-        raise ValueError("Missing dnssec_algorithm in key data")
+    dnssec_properties = key_data.pop("dnssec", {})
 
-    if not (private_cls := name_to_cls.get(dnssec_algorithm)):
-        raise ValueError(f"Unsupported algorithm: {dnssec_algorithm}")
+    if not (algorithm := Algorithm(dnssec_properties.get("algorithm"))):
+        raise ValueError("Missing DNSSEC algorithm in JWK")
+
+    if not (private_cls := name_to_cls.get(algorithm.name)):
+        raise ValueError(f"Unsupported algorithm: {algorithm}")
 
     jwk = JWK(**key_data)
     if not jwk.has_private:
@@ -93,7 +96,7 @@ def command_generate_key(args: argparse.Namespace) -> None:
             private_key = private_cls.generate()
 
     jwk = JWK.from_pyca(private_key.key)
-    jwk["dnssec_algorithm"] = alg
+    jwk.update({"dnssec": {"algorithm": private_cls.public_cls.algorithm}})
 
     if args.output:
         with os.fdopen(
