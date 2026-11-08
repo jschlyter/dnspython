@@ -17,9 +17,11 @@
 
 import os
 import re
+import sys
 import unittest
 import unittest.mock
 
+import dns._features
 import dns.dnssec
 import dns.exception
 import dns.name
@@ -467,8 +469,10 @@ class DNSSECKey(unittest.TestCase):
                     Path(temp_dir), overwrite=True
                 )
                 assert new_private_filename.exists()
-                stat = os.stat(new_private_filename)
-                assert stat.st_mode & 0o777 == 0o600
+                # windows ignores our mode bits
+                if sys.platform != "win32":
+                    stat = os.stat(new_private_filename)
+                    assert stat.st_mode & 0o777 == 0o600
 
                 new_private_key = Key.from_bind(new_private_filename)
                 assert new_private_key.key_id() == key_from_bind.key_id()
@@ -478,6 +482,7 @@ class DNSSECKey(unittest.TestCase):
                 )
                 assert new_private_key.public.to_pem() == key_from_bind.public.to_pem()
 
+    @unittest.skipUnless(dns._features.have("jwk"), "jwcrypto required")
     def test_import_export_jwk_private_key(self):
         """Test importing and exporting JWK private keys."""
 
@@ -507,8 +512,10 @@ class DNSSECKey(unittest.TestCase):
                 assert key_from_bind.private is not None
                 assert read_jwk.private.to_pem() == key_from_bind.private.to_pem()
                 assert read_jwk.public.to_pem() == key_from_bind.public.to_pem()
-                stat = os.stat(temp_file.name)
-                assert stat.st_mode & 0o777 == 0o600
+                # windows ignores our mode bits
+                if sys.platform != "win32":
+                    stat = os.stat(temp_file.name)
+                    assert stat.st_mode & 0o777 == 0o600
 
             # Write and read JWK-style private file as text
             with tempfile.NamedTemporaryFile("w+t", suffix=".json") as temp_file:
@@ -521,8 +528,10 @@ class DNSSECKey(unittest.TestCase):
                 assert key_from_bind.private is not None
                 assert read_jwk.private.to_pem() == key_from_bind.private.to_pem()
                 assert read_jwk.public.to_pem() == key_from_bind.public.to_pem()
-                stat = os.stat(temp_file.name)
-                assert stat.st_mode & 0o777 == 0o600
+                # windows ignores our mode bits
+                if sys.platform != "win32":
+                    stat = os.stat(temp_file.name)
+                    assert stat.st_mode & 0o777 == 0o600
 
             # Write and read JWK-style public key file as binary
             with tempfile.TemporaryDirectory() as temp_dir:
@@ -538,6 +547,7 @@ class DNSSECKey(unittest.TestCase):
                 stat = os.stat(new_private_filename)
                 assert stat.st_mode & 0o444 == 0o444
 
+    @unittest.skipUnless(dns._features.have("jwk"), "jwcrypto required")
     def test_bind_jwk_match(self):
         """Test that a key imported from a BIND private key matches the corresponding JWK."""
 
