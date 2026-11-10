@@ -41,7 +41,6 @@ def sign_zone(
     signing_keys: list[tuple[GenericPrivateKey, dns.rdtypes.ANY.DNSKEY.DNSKEY]] = []
 
     for key_file in keys:
-        print(key_file)
         key = Key.from_jwk_file(key_file)
         if key.private is None:
             raise ValueError(f"Key {key.name} does not have a private key")
