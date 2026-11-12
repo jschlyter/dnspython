@@ -15,11 +15,14 @@
 # ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT
 # OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
+from base64 import decode
 import os
 import re
+import sys
 import unittest
 import unittest.mock
 
+import dns._features
 import dns.dnssec
 import dns.exception
 import dns.name
@@ -55,7 +58,7 @@ try:
         PrivateRSASHA256,
         PrivateRSASHA512,
     )
-    from dns.dnssecalgs.serialization import Key
+    from dns.dnssecalgs.serialization import Key, _encode_name, _decode_name
 except ImportError:
     pass  # Cryptography ImportError already handled in dns.dnssec
 
@@ -467,8 +470,10 @@ class DNSSECKey(unittest.TestCase):
                     Path(temp_dir), overwrite=True
                 )
                 assert new_private_filename.exists()
-                stat = os.stat(new_private_filename)
-                assert stat.st_mode & 0o777 == 0o600
+                # windows ignores our mode bits
+                if sys.platform != "win32":
+                    stat = os.stat(new_private_filename)
+                    assert stat.st_mode & 0o777 == 0o600
 
                 new_private_key = Key.from_bind(new_private_filename)
                 assert new_private_key.key_id() == key_from_bind.key_id()
@@ -478,6 +483,7 @@ class DNSSECKey(unittest.TestCase):
                 )
                 assert new_private_key.public.to_pem() == key_from_bind.public.to_pem()
 
+    @unittest.skipUnless(dns._features.have("jwk"), "jwcrypto required")
     def test_import_export_jwk_private_key(self):
         """Test importing and exporting JWK private keys."""
 
@@ -507,8 +513,10 @@ class DNSSECKey(unittest.TestCase):
                 assert key_from_bind.private is not None
                 assert read_jwk.private.to_pem() == key_from_bind.private.to_pem()
                 assert read_jwk.public.to_pem() == key_from_bind.public.to_pem()
-                stat = os.stat(temp_file.name)
-                assert stat.st_mode & 0o777 == 0o600
+                # windows ignores our mode bits
+                if sys.platform != "win32":
+                    stat = os.stat(temp_file.name)
+                    assert stat.st_mode & 0o777 == 0o600
 
             # Write and read JWK-style private file as text
             with tempfile.NamedTemporaryFile("w+t", suffix=".json") as temp_file:
@@ -521,8 +529,10 @@ class DNSSECKey(unittest.TestCase):
                 assert key_from_bind.private is not None
                 assert read_jwk.private.to_pem() == key_from_bind.private.to_pem()
                 assert read_jwk.public.to_pem() == key_from_bind.public.to_pem()
-                stat = os.stat(temp_file.name)
-                assert stat.st_mode & 0o777 == 0o600
+                # windows ignores our mode bits
+                if sys.platform != "win32":
+                    stat = os.stat(temp_file.name)
+                    assert stat.st_mode & 0o777 == 0o600
 
             # Write and read JWK-style public key file as binary
             with tempfile.TemporaryDirectory() as temp_dir:
@@ -538,6 +548,7 @@ class DNSSECKey(unittest.TestCase):
                 stat = os.stat(new_private_filename)
                 assert stat.st_mode & 0o444 == 0o444
 
+    @unittest.skipUnless(dns._features.have("jwk"), "jwcrypto required")
     def test_bind_jwk_match(self):
         """Test that a key imported from a BIND private key matches the corresponding JWK."""
 
@@ -793,6 +804,37 @@ class DNSSECKey(unittest.TestCase):
             (directory / key.get_bind_private_key_filename()).touch()
             with self.assertRaisesRegex(FileExistsError, "Private key file"):
                 key.to_bind(directory)
+
+    def test_to_bind_filename_encoding(self):
+        """Test that the BIND-style filenames are encoded and decoded correctly."""
+
+        test_cases = [
+            (".", "."),
+            ("example.com.", "example.com."),
+            ("räksmörgås.example.com", "xn--rksmrgs-5wao1o.example.com."),
+            ("foo+bar.example.com", "foo%2Bbar.example.com."),
+            ("foo/bar.example.com", "foo%2Fbar.example.com."),
+            (b"b\x00rken.example.com", "b%00rken.example.com."),
+        ]
+
+        for decoded, encoded in test_cases:
+            with self.subTest(decoded=decoded, encoded=encoded):
+                assert _encode_name(dns.name.from_text(decoded)) == encoded
+                assert _decode_name(encoded) == dns.name.from_text(decoded)
+
+    def test_bind_filename_decoder_invalid(self):
+        """Malformed names in filenames raise InvalidKeyFormat."""
+
+        for bad in [
+            "a..com.",
+            ".com.",
+            "..",
+            "x" * 64 + ".com.",
+            ("a" * 63 + ".") * 4,
+        ]:
+            with self.subTest(bad=bad):
+                with self.assertRaises(dns.exception.InvalidKeyFormat):
+                    _decode_name(bad)
 
 
 if __name__ == "__main__":

@@ -5,16 +5,15 @@ import json
 import os
 import re
 import tempfile
+import urllib.parse
 from pathlib import Path
 from typing import BinaryIO, Self, TextIO
 
 from cryptography.hazmat.primitives.asymmetric import ec, ed448, ed25519, mldsa, rsa
-from jwcrypto.common import JWException
-from jwcrypto.jwk import JWK
 
+import dns._features
 import dns._file_util
 import dns.dnssec
-import dns.dnssectypes
 import dns.name
 import dns.rdataset
 import dns.rdatatype
@@ -29,7 +28,17 @@ from dns.dnssecalgs.cryptography import CryptographyPrivateKey, CryptographyPubl
 from dns.dnssectypes import Algorithm, DSDigest
 from dns.exception import DNSException, InvalidKeyFormat, SyntaxError
 
+if dns._features.have("jwk"):
+    from jwcrypto.common import JWException
+    from jwcrypto.jwk import JWK
+
+
 SUPPORTED_BIND_PRIVATE_KEY_FORMATS = {"v1.3"}
+DNSKEY_JWK_PARAMETER = "dnskey"
+
+
+class NoJWK(DNSException):
+    """JSON Web Keys not available; install jwcrypto."""
 
 
 def _int_to_base64(value: int, length: int | None = None) -> str:
@@ -52,6 +61,49 @@ def _base64_to_int(value: str) -> int:
     :rtype: :py:class:`int`
     """
     return int.from_bytes(base64.b64decode(value.encode(), validate=True))
+
+
+def _encode_name(name: dns.name.Name) -> str:
+    """Encode a DNS name for use in BIND-style filenames.
+
+    :param name: The DNS name to encode.
+    :type name: :py:class:`dns.name.Name`
+    :rtype: :py:class:`str`
+    """
+
+    if name == dns.name.root:
+        return "."
+    return ".".join(
+        "".join(
+            (
+                chr(b).lower()
+                if chr(b).isascii() and (chr(b).isalnum() or chr(b) in "-_")
+                else f"%{b:02X}"
+            )
+            for b in label
+        )
+        for label in name.labels
+    )
+
+
+def _decode_name(encoded_name: str) -> dns.name.Name:
+    """Decode a BIND-style filename into a DNS name.
+
+    :param encoded_name: The encoded DNS name from the filename.
+    :type encoded_name: :py:class:`str`
+    :rtype: :py:class:`dns.name.Name`
+    """
+
+    if encoded_name == ".":
+        return dns.name.root
+
+    try:
+        labels = [
+            urllib.parse.unquote_to_bytes(l) for l in encoded_name[:-1].split(".")
+        ]
+        return dns.name.Name(labels + [b""])
+    except (ValueError, DNSException) as exc:
+        raise InvalidKeyFormat(f"Invalid name in filename: {encoded_name}") from exc
 
 
 @dataclasses.dataclass(frozen=True)
@@ -128,6 +180,8 @@ class Key:
         :rtype: :py:class:`Key`
         """
 
+        if not dns._features.have("jwk"):
+            raise NoJWK
         with dns._file_util.maybe_open(f, encoding="utf-8") as fp:
             data = fp.read()
         return cls.from_jwk_text(data)
@@ -141,12 +195,14 @@ class Key:
         :rtype: :py:class:`Key`
         """
 
+        if not dns._features.have("jwk"):
+            raise NoJWK
         try:
-            jwk = JWK.from_json(data)
+            jwk = JWK.from_json(data)  # pyright: ignore
 
-            dnssec_properties = jwk["dnssec"]
-
-            algorithm = dnssec_properties["algorithm"]
+            dnskey_properties = jwk[DNSKEY_JWK_PARAMETER]
+            algorithm = dnskey_properties["algorithm"]
+            algorithm = dnskey_properties["algorithm"]
             algorithm_cls = get_algorithm_cls(algorithm)
 
             if jwk.has_private:
@@ -156,17 +212,23 @@ class Key:
                 private_key = None
                 public_key = algorithm_cls.public_cls(jwk.get_op_key("verify"))
 
-            name = dns.name.from_text(dnssec_properties["name"])
+            name = dns.name.from_text(dnskey_properties["name"])
 
-            keytag = dnssec_properties["keytag"]
+            keytag = dnskey_properties["keytag"]
 
             dnskey = dns.dnssec.make_dnskey(
                 public_key=public_key,
-                algorithm=dnssec_properties["algorithm"],
-                flags=dnssec_properties["flags"],
-                protocol=dnssec_properties["protocol"],
+                algorithm=dnskey_properties["algorithm"],
+                flags=dnskey_properties["flags"],
+                protocol=dnskey_properties["protocol"],
             )
-        except (KeyError, ValueError, TypeError, binascii.Error, JWException) as exc:
+        except (
+            KeyError,
+            ValueError,
+            TypeError,
+            binascii.Error,
+            JWException,  # pyright: ignore
+        ) as exc:
             raise InvalidKeyFormat("Failed to create key from JWK") from exc
 
         if keytag != key_id(dnskey):
@@ -191,6 +253,8 @@ class Key:
         :type public_only: :py:class:`bool`
         """
 
+        if not dns._features.have("jwk"):
+            raise NoJWK
         with dns._file_util.maybe_open(
             f, "wb", chmod=None if public_only else 0o600
         ) as output:
@@ -203,7 +267,7 @@ class Key:
     def to_jwk_text(self, public_only: bool = False) -> str:
         """Return JWK string for the key.
 
-        DNSKEY information will be included in the JWK in the "dnssec" parameter
+        DNSKEY information will be included in the JWK in the "dnskey" parameter
         and includes name, algorithm, protocol, flags, and keytag.
 
         :param public_only: Whether to include only the public key in the JWK.
@@ -211,14 +275,16 @@ class Key:
         :rtype: :py:class:`str`
         """
 
+        if not dns._features.have("jwk"):
+            raise NoJWK
         if public_only:
             if isinstance(self.public, CryptographyPublicKey):
-                jwk = JWK.from_pyca(self.public.key)
+                jwk = JWK.from_pyca(self.public.key)  # pyright: ignore
             else:
                 raise InvalidKeyFormat("Unsupported public key type")
         else:
             if isinstance(self.private, CryptographyPrivateKey):
-                jwk = JWK.from_pyca(self.private.key)
+                jwk = JWK.from_pyca(self.private.key)  # pyright: ignore
             elif self.private is None:
                 raise InvalidKeyFormat("Private key is not set")
             else:
@@ -228,7 +294,7 @@ class Key:
 
         jwk_dict.update(
             {
-                "dnssec": {
+                DNSKEY_JWK_PARAMETER: {
                     "name": self.name.to_text(),
                     "algorithm": self.dnskey.algorithm,
                     "protocol": self.dnskey.protocol,
@@ -257,7 +323,7 @@ class Key:
         if match := re.fullmatch(
             r"K(.*\.)\+(\d{3})\+(\d{5})\.private", private_filename.name
         ):
-            expected_name = match.group(1).lower()
+            expected_name = _decode_name(match.group(1))
             expected_algorithm = int(match.group(2))
             expected_key_id = int(match.group(3))
         else:
@@ -284,10 +350,9 @@ class Key:
         ) as exc:
             raise InvalidKeyFormat("Failed to create key from BIND keys") from exc
 
-        name = res.name.to_text().lower()
-        if expected_name != name:
+        if expected_name != res.name:
             raise InvalidKeyFormat(
-                f"Key name mismatch: expected {expected_name}, got {name}"
+                f"Key name mismatch: expected {expected_name}, got {res.name}"
             )
 
         if expected_algorithm != res.dnskey.algorithm:
@@ -438,7 +503,7 @@ class Key:
 
         :rtype: Path
         """
-        name = self.name.to_text().lower()
+        name = _encode_name(self.name)
         return Path(
             f"K{name}+{self.dnskey.algorithm.value:03}+{self.dnskey.key_id():05}.private"
         )
@@ -509,7 +574,9 @@ class Key:
 
         try:
 
-            with open(tmp_public_filename, "wb") as fp:
+            with dns._file_util.maybe_open(
+                tmp_public_filename, "wb", chmod=0o644
+            ) as fp:
                 fp.write(public_data)
 
             if tmp_private_filename is not None:
