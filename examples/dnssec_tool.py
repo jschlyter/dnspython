@@ -112,8 +112,8 @@ def convert_jwk_to_bind(
         print(f"Converted {keyfile} to {output_filename}")
 
 
-@app.command(name="dnskey-to-ds")
-def dnskey_to_ds(
+@app.command(name="jwk-to-ds")
+def convert_jwk_to_ds(
     keyfile: Path,
     algorithm: Annotated[
         DSDigest,
@@ -122,7 +122,7 @@ def dnskey_to_ds(
     cds: bool = False,
     debug: bool = False,
 ) -> None:
-    """Convert a DNSKEY to a DS or CDS record."""
+    """Convert a JWK to a DS/CDS record."""
 
     if debug:
         logging.basicConfig(level=logging.DEBUG)
