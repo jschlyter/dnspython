@@ -350,9 +350,9 @@ class Key:
         ) as exc:
             raise InvalidKeyFormat("Failed to create key from BIND keys") from exc
 
-        if expected_name != name:
+        if expected_name != res.name:
             raise InvalidKeyFormat(
-                f"Key name mismatch: expected {expected_name}, got {name}"
+                f"Key name mismatch: expected {expected_name}, got {res.name}"
             )
 
         if expected_algorithm != res.dnskey.algorithm:
