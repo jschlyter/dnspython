@@ -12,11 +12,13 @@ def H(data: bytes) -> bytes:
 class Merkle3TestCase(unittest.TestCase):
 
     def test_empty(self):
+        """Test that the digest of an empty trie is correct."""
         m = dns.merkle3.Merkle3(hashlib.sha384)
         self.assertEqual(m.digest(), hashlib.sha384(b"").digest())
         self.assertEqual(len(m), 0)
 
     def test_non_empty(self):
+        """Test that the trie correctly computes the digest for non-empty data."""
         m = dns.merkle3.Merkle3(hashlib.sha384)
         m.update(b"some data")
         # root = H(level1), level1 = H(level2), level2 = H(leaf)
@@ -24,6 +26,8 @@ class Merkle3TestCase(unittest.TestCase):
         self.assertEqual(len(m), 1)
 
     def test_multiple(self):
+        """Test multiple updates and digests."""
+
         m = dns.merkle3.Merkle3(hashlib.sha384)
 
         i1, i2 = m.update(b"foo")
@@ -53,6 +57,7 @@ class Merkle3TestCase(unittest.TestCase):
         self.assertEqual(len(m), 3)
 
     def test_remove(self):
+        """Test removing elements from the trie."""
         m = dns.merkle3.Merkle3(hashlib.sha384)
         m.update(b"foo")
         m.update(b"bar")
@@ -66,6 +71,7 @@ class Merkle3TestCase(unittest.TestCase):
         self.assertEqual(m.digest(), dns.merkle3.Merkle3(hashlib.sha384).digest())
 
     def test_remove_duplicate(self):
+        """Test removing a duplicate element from the trie."""
         m = dns.merkle3.Merkle3(hashlib.sha384)
         m.update(b"foo")
         m.update(b"bar")
@@ -78,8 +84,10 @@ class Merkle3TestCase(unittest.TestCase):
         self.assertEqual(m.digest(), expected.digest())
 
     def test_remove_digest(self):
-        # After removing data, the digest must equal that of a trie that
-        # never contained it.
+        """Test that the digest is correct after removing elements from the trie.
+
+        After removing data, the digest must equal that of a trie that never contained it.
+        """
         data = [b"foo", b"bar", b"data352", b"data391", b"data17", b"data19"]
         for removed in data:
             m = dns.merkle3.Merkle3(hashlib.sha384)
@@ -92,6 +100,7 @@ class Merkle3TestCase(unittest.TestCase):
             self.assertEqual(m.digest(), expected.digest())
 
     def test_same_level2_bucket(self):
+        """Test that two elements landing in the same level-2 bucket are handled correctly."""
         # b"data352" and b"data391" both land in bucket (152, 192)
         m = dns.merkle3.Merkle3(hashlib.sha384)
         self.assertEqual(m.update(b"data352"), (152, 192))
@@ -101,6 +110,7 @@ class Merkle3TestCase(unittest.TestCase):
         self.assertEqual(len(m), 2)
 
     def test_same_level1_bucket(self):
+        """Test that two elements sharing the same level-1 bucket are handled correctly."""
         # b"data17" and b"data19" share index1 54, with index2 105 and 80
         m = dns.merkle3.Merkle3(hashlib.sha384)
         self.assertEqual(m.update(b"data17"), (54, 105))
@@ -110,6 +120,7 @@ class Merkle3TestCase(unittest.TestCase):
         self.assertEqual(m.digest(), H(level1))
 
     def test_different_level1_buckets(self):
+        """Test that elements in different level-1 buckets are handled correctly."""
         m = dns.merkle3.Merkle3(hashlib.sha384)
         self.assertEqual(m.update(b"foo"), (152, 193))
         self.assertEqual(m.update(b"bar"), (20, 145))
@@ -118,6 +129,7 @@ class Merkle3TestCase(unittest.TestCase):
         self.assertEqual(m.digest(), expected)
 
     def test_insertion_order_independent(self):
+        """Test that the digest is independent of the insertion order."""
         data = [b"foo", b"bar", b"data352", b"data391", b"data17", b"data19"]
         digests = set()
         for permutation in itertools.permutations(data):
@@ -128,6 +140,7 @@ class Merkle3TestCase(unittest.TestCase):
         self.assertEqual(len(digests), 1)
 
     def test_sha512(self):
+        """Test that the trie works correctly with SHA-512."""
         m = dns.merkle3.Merkle3(hashlib.sha512)
         m.update(b"some data")
         expected = b"some data"
@@ -137,16 +150,18 @@ class Merkle3TestCase(unittest.TestCase):
         self.assertEqual(len(m.digest()), 64)
 
     def test_draft_example(self):
-        # Example from Section 2.2 of draft-aklpdw-dnsop-zonemd-incremental:
-        #
-        # example.com.  300  IN  SOA   mname.example.com. rname.example.com. (
-        #                              1 3600 7200 43200 300 )
-        # example.com.   60  IN  NS    ns1.foo.example.
-        # example.com.  300  IN  AAAA  2606:4700:10::ac42:93f3
-        # example.com.  300  IN  AAAA  2606:4700:10::6814:179a
-        #
-        # Each entry is the canonical wire form of one RRset, the leaf hash
-        # given in the draft, and the expected (index1, index2).
+        """Test example from Section 2.2 of draft-aklpdw-dnsop-zonemd-incremental.
+
+        example.com.  300  IN  SOA   mname.example.com. rname.example.com. (
+                                     1 3600 7200 43200 300 )
+        example.com.   60  IN  NS    ns1.foo.example.
+        example.com.  300  IN  AAAA  2606:4700:10::ac42:93f3
+        example.com.  300  IN  AAAA  2606:4700:10::6814:179a
+
+        Each entry is the canonical wire form of one RRset, the leaf hash
+        given in the draft, and the expected (index1, index2).
+        """
+
         rrsets = [
             (
                 # NS
@@ -190,8 +205,8 @@ class Merkle3TestCase(unittest.TestCase):
         )
 
     def test_digest_cache(self):
-        # Interleave changes with digest() calls, so that the cached node
-        # hashes are reused, and compare with a freshly built trie each time.
+        """Interleave changes with digest() calls, so that the cached node
+        hashes are reused, and compare with a freshly built trie each time."""
         data = [b"foo", b"bar", b"data352", b"data391", b"data17", b"data19"]
         ops = [(True, d) for d in data] + [(False, d) for d in data]
         m = dns.merkle3.Merkle3(hashlib.sha384)
@@ -212,8 +227,8 @@ class Merkle3TestCase(unittest.TestCase):
         self.assertEqual(m.digest(), H(b""))
 
     def test_digest_recompute(self):
-        # digest(recompute=True) must agree with the cached digest() after every
-        # change, and must not depend on digest() having been called.
+        """digest(recompute=True) must agree with the cached digest() after every
+        change, and must not depend on digest() having been called."""
         data = [b"foo", b"bar", b"data352", b"data391", b"data17", b"data19"]
         m = dns.merkle3.Merkle3(hashlib.sha384)
         self.assertEqual(m.digest(recompute=True), H(b""))
