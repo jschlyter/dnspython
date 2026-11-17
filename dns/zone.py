@@ -39,6 +39,7 @@ import dns.rrset
 import dns.tokenizer
 import dns.transaction
 import dns.zonefile
+from dns.merkle3 import Merkle3
 from dns.zonetypes import DigestHashAlgorithm, DigestScheme, _digest_hashers
 
 
@@ -833,23 +834,12 @@ class Zone(dns.transaction.TransactionManager):
             soa = cast(dns.rdtypes.ANY.SOA.SOA, soa_rds[0])
             return soa
 
-    def _compute_digest(
-        self,
-        hash_algorithm: DigestHashAlgorithm,
-        scheme: DigestScheme = DigestScheme.SIMPLE,
-    ) -> bytes:
-        hashinfo = _digest_hashers.get(hash_algorithm)
-        if not hashinfo:
-            raise UnsupportedDigestHashAlgorithm
-        if scheme != DigestScheme.SIMPLE:
-            raise UnsupportedDigestScheme
-
+    def _get_digest_bytes(self) -> Iterable[bytes]:
         if self.relativize:
             origin_name = dns.name.empty
         else:
             assert self.origin is not None
             origin_name = self.origin
-        hasher = hashinfo()
         for name, node in sorted(self.items()):
             rrnamebuf = name.to_digestable(self.origin)
             for rdataset in sorted(node, key=lambda rds: (rds.rdtype, rds.covers)):
@@ -862,10 +852,48 @@ class Zone(dns.transaction.TransactionManager):
                     "!HHI", rdataset.rdtype, rdataset.rdclass, rdataset.ttl
                 )
                 rdatas = [rdata.to_digestable(self.origin) for rdata in rdataset]
+                res = b""
                 for rdata in sorted(rdatas):
                     rrlen = struct.pack("!H", len(rdata))
-                    hasher.update(rrnamebuf + rrfixed + rrlen + rdata)
+                    res += rrnamebuf + rrfixed + rrlen + rdata
+                yield res
+
+    def _compute_digest_simple(
+        self,
+        hash_algorithm: DigestHashAlgorithm,
+    ) -> bytes:
+        hashinfo = _digest_hashers.get(hash_algorithm)
+        if not hashinfo:
+            raise UnsupportedDigestHashAlgorithm
+        hasher = hashinfo()
+        for hash_input in self._get_digest_bytes():
+            hasher.update(hash_input)
         return hasher.digest()
+
+    def _compute_digest_merkle3(
+        self,
+        hash_algorithm: DigestHashAlgorithm,
+    ) -> bytes:
+        hashinfo = _digest_hashers.get(hash_algorithm)
+        if not hashinfo:
+            raise UnsupportedDigestHashAlgorithm
+        trie = Merkle3(hashinfo=hashinfo)
+        for hash_input in self._get_digest_bytes():
+            trie.update(hash_input)
+        return trie.digest()
+
+    def _compute_digest(
+        self,
+        hash_algorithm: DigestHashAlgorithm,
+        scheme: DigestScheme = DigestScheme.SIMPLE,
+    ) -> bytes:
+        match scheme:
+            case DigestScheme.SIMPLE:
+                return self._compute_digest_simple(hash_algorithm)
+            case DigestScheme.MERKLE3:
+                return self._compute_digest_merkle3(hash_algorithm)
+            case _:
+                raise UnsupportedDigestScheme
 
     def compute_digest(
         self,

@@ -102,6 +102,14 @@ class ZoneDigestTestCase(unittest.TestCase):
         NS2.EXAMPLE.  3600   IN  AAAA    2001:db8::63
     """)
 
+    merkle3_example = textwrap.dedent("""
+        example.com.  300  IN  SOA   mname.example.com. rname.example.com. ( 1 3600 7200 43200 300 )
+        example.com.   60  IN  NS    ns1.foo.example.
+        example.com.  300  IN  AAAA  2606:4700:10::ac42:93f3
+        example.com.  300  IN  AAAA  2606:4700:10::6814:179a
+        example.com.  300  IN  ZONEMD  1 2 1 5f0ad47c76a59b6e287e221c296ea5c899ae5d473e4ae0e3ff0fcedf3e2345be7fc9f27ca13077754c98bb53b6288b64
+    """)
+
     def _get_zonemd(self, zone):
         return zone.get_rdataset(zone.origin, "ZONEMD")
 
@@ -115,7 +123,19 @@ class ZoneDigestTestCase(unittest.TestCase):
         zone = dns.zone.from_text(self.simple_example, origin="example")
         zone.verify_digest()
         zonemd = self._get_zonemd(zone)
-        self.assertEqual(zonemd[0], zone.compute_digest(zonemd[0].hash_algorithm))
+        self.assertEqual(
+            zonemd[0],
+            zone.compute_digest(zonemd[0].hash_algorithm, zonemd[0].scheme),
+        )
+
+    def test_zonemd_merkle3(self):
+        zone = dns.zone.from_text(self.merkle3_example, origin="example.com")
+        zone.verify_digest()
+        zonemd = self._get_zonemd(zone)
+        self.assertEqual(
+            zonemd[0],
+            zone.compute_digest(zonemd[0].hash_algorithm, zonemd[0].scheme),
+        )
 
     def test_zonemd_simple_absolute(self):
         zone = dns.zone.from_text(
@@ -204,7 +224,7 @@ class ZoneDigestTestCase(unittest.TestCase):
     def test_zonemd_unknown_scheme(self):
         zone = dns.zone.from_text(self.simple_example, origin="example")
         with self.assertRaises(dns.zone.UnsupportedDigestScheme):
-            zone.compute_digest(dns.zone.DigestHashAlgorithm.SHA384, 2)
+            zone.compute_digest(dns.zone.DigestHashAlgorithm.SHA384, 42)
 
     def test_zonemd_unknown_hash_algorithm(self):
         zone = dns.zone.from_text(self.simple_example, origin="example")

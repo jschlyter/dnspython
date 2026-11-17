@@ -14,6 +14,7 @@ class DigestScheme(dns.enum.IntEnum):
     """ZONEMD Scheme"""
 
     SIMPLE = 1
+    MERKLE3 = 2  # Provisionally assigned for Merkle3 scheme
 
     @classmethod
     def _maximum(cls):
