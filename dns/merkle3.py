@@ -87,8 +87,10 @@ class Merkle3:
         :rtype: bytes
         """
 
-        if recompute:
-            return self._digest_full()
+        return self._digest_full() if recompute else self._digest_cache()
+
+    def _digest_cache(self) -> bytes:
+        """Compute the digest of the Merkle root of the trie using cached hashes."""
 
         if self._root_hash is not None:
             return self._root_hash
@@ -123,14 +125,7 @@ class Merkle3:
         return self._root_hash
 
     def _digest_full(self) -> bytes:
-        """Compute the digest of the Merkle root of the trie from scratch.
-
-        Unlike :py:meth:`digest`, this does not use or update the cached
-        node hashes. It is slower, but useful for verifying the cache.
-
-        :return: The Merkle root hash.
-        :rtype: bytes
-        """
+        """Compute the digest of the Merkle root of the trie from scratch."""
 
         level1_leaves = []
         for index1 in sorted(self.trie):
