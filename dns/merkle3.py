@@ -23,11 +23,11 @@ class Merkle3:
         self._level1_hashes: dict[int, bytes] = {}
         self._level2_hashes: dict[int, dict[int, bytes]] = {}
         self._dirty: dict[int, set[int]] = {}
-        self._root: bytes | None = None
+        self._root_hash: bytes | None = None
 
     def _mark_dirty(self, index1: int, index2: int) -> None:
         self._dirty.setdefault(index1, set()).add(index2)
-        self._root = None
+        self._root_hash = None
 
     def __len__(self) -> int:
         """Return the total number of leaves in the trie."""
@@ -89,8 +89,8 @@ class Merkle3:
         if recompute:
             return self._digest_full()
 
-        if self._root is not None:
-            return self._root
+        if self._root_hash is not None:
+            return self._root_hash
 
         hashinfo = self.hashinfo
 
@@ -113,13 +113,13 @@ class Merkle3:
             ).digest()
 
         self._dirty.clear()
-        self._root = hashinfo(
+        self._root_hash = hashinfo(
             b"".join(
                 self._level1_hashes[index1] for index1 in sorted(self._level1_hashes)
             )
         ).digest()
 
-        return self._root
+        return self._root_hash
 
     def _digest_full(self) -> bytes:
         """Compute the Merkle root of the trie from scratch.
