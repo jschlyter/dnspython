@@ -8,7 +8,7 @@ HashFactory = Callable[[bytes], "hashlib._Hash"]
 
 
 class Merkle3:
-    """Merkle3 trie implementation for computing Merkle root hashes.
+    """Merkle3 trie implementation for incremental Merkle root computation.
 
     https://datatracker.ietf.org/doc/draft-aklpdw-dnsop-zonemd-incremental/
     """
@@ -26,6 +26,7 @@ class Merkle3:
         self._root_hash: bytes | None = None
 
     def _mark_dirty(self, index1: int, index2: int) -> None:
+        """Mark the specified indices as dirty, indicating that their hashes need to be recomputed."""
         self._dirty.setdefault(index1, set()).add(index2)
         self._root_hash = None
 
@@ -78,7 +79,7 @@ class Merkle3:
         return True
 
     def digest(self, recompute: bool = False) -> bytes:
-        """Compute the Merkle root of the trie.
+        """Compute the digest of the Merkle root of the trie.
 
         :param recompute: If ``True``, recompute the Merkle root from scratch instead of using cached hashes.
         :type recompute: bool
@@ -122,7 +123,7 @@ class Merkle3:
         return self._root_hash
 
     def _digest_full(self) -> bytes:
-        """Compute the Merkle root of the trie from scratch.
+        """Compute the digest of the Merkle root of the trie from scratch.
 
         Unlike :py:meth:`digest`, this does not use or update the cached
         node hashes. It is slower, but useful for verifying the cache.
